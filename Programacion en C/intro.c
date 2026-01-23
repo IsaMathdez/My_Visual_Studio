@@ -8,9 +8,9 @@ int main(){
     int edad;
     printf("Hola como te llamas? \n");
     fflush(stdin);
-    scanf("%s", &name);
+    gets(name);
     printf("Un placer %s, que edad tienes? \n", name);
-    scanf("%i", edad);
+    scanf("%i", &edad);
 
     if (edad <= 18){
         printf("%s!! Eres menor de edad! \n", name);

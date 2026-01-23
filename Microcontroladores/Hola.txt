@@ -3,3 +3,5 @@ INICIANDO CURSO MICROCONTROLADORES 2026-C1
 Probando los commit and push
 
 Agrengando nuevo commit con el repositorio ya agregado a mi github
+
+Tarea 1: COmpilar un hola mundo en un ESP32
