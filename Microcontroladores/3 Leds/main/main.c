@@ -4,6 +4,7 @@
 // Lógica: Máximo 2 LEDs encendidos. Si se intenta encender un tercero, se apaga el más antiguo.
 // Version 1.0
 
+/*
 #include <stdio.h>
 #include <stdbool.h>
 #include "freertos/FreeRTOS.h"
@@ -119,7 +120,8 @@ void app_main(void) {
 
         vTaskDelay(pdMS_TO_TICKS(50)); // Debounce simple y respiro al CPU
     }
-}
+} 
+*/
 
 
 
@@ -127,15 +129,6 @@ void app_main(void) {
 
 
 
-
-
-
-
-
-
-
-
-/*
 // Version 2.1 con MQTT
 
 #include <stdio.h>
@@ -155,8 +148,13 @@ void app_main(void) {
 #define MQTT_TOPIC_SUB "leds/control"
 
 // Pines (igual que antes)
-#define PIN_BTN_BLUE 18, PIN_BTN_YELLOW 19, PIN_BTN_RED 21
-#define PIN_LED_BLUE 4,  PIN_LED_YELLOW 5,  PIN_LED_RED 2
+#define PIN_BTN_BLUE   18
+#define PIN_BTN_YELLOW 19
+#define PIN_BTN_RED    21
+
+#define PIN_LED_BLUE   4
+#define PIN_LED_YELLOW 5
+#define PIN_LED_RED    2
 
 typedef enum { NONE = -1, BLUE = 0, YELLOW = 1, RED = 2 } color_t;
 
@@ -199,7 +197,7 @@ void process_logic(IO_t *io) {
         }
         last_state[i] = io->btn_phys[i];
     }
-    printf("Program by Isaias Matos with MQTT\n");
+    // printf("Program by Isaias Matos with MQTT\n");
 }
 
 // --- MANEJADOR DE EVENTOS MQTT ---
@@ -239,15 +237,39 @@ void mqtt_init() {
     esp_mqtt_client_subscribe(client, MQTT_TOPIC_SUB, 0);
 }
 
+
+void init_hw() {
+    // Configurar LEDs como salida
+    gpio_set_direction(PIN_LED_BLUE, GPIO_MODE_OUTPUT);
+    gpio_set_direction(PIN_LED_YELLOW, GPIO_MODE_OUTPUT);
+    gpio_set_direction(PIN_LED_RED, GPIO_MODE_OUTPUT);
+
+    // Configurar Botones como entrada con Pull-down interno
+    gpio_set_direction(PIN_BTN_BLUE, GPIO_MODE_INPUT);
+    gpio_pullup_dis(PIN_BTN_BLUE);
+    gpio_pulldown_en(PIN_BTN_BLUE);
+
+    gpio_set_direction(PIN_BTN_YELLOW, GPIO_MODE_INPUT);
+    gpio_pullup_dis(PIN_BTN_YELLOW);
+    gpio_pulldown_en(PIN_BTN_YELLOW);
+
+    gpio_set_direction(PIN_BTN_RED, GPIO_MODE_INPUT);
+    gpio_pullup_dis(PIN_BTN_RED);
+    gpio_pulldown_en(PIN_BTN_RED);
+}
+
+
 // --- FUNCIÓN PRINCIPAL ---
 
 void app_main(void) {
     // Inicializar hardware (pines 18, 19, 21 como input y 4, 5, 2 como output)
     // ... (Aquí iría el código de gpio_set_direction del ejemplo anterior) ...
+    init_hw();
+    IO_t sistema_io = {0};
     
     // Prueba de lámparas: enciende todo por 1 segundo al arrancar
     gpio_set_level(4, 1); gpio_set_level(5, 1); gpio_set_level(2, 1);
-    vTaskDelay(pdMS_TO_TICKS(4000));
+    vTaskDelay(pdMS_TO_TICKS(1000));
     gpio_set_level(4, 0); gpio_set_level(5, 0); gpio_set_level(2, 0);
 
     // Inicializar WiFi y MQTT
@@ -273,4 +295,3 @@ void app_main(void) {
 
 // THE END
 
-*/
