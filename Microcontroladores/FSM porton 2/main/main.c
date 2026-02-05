@@ -1,5 +1,6 @@
 // Isaias Matos
-// FSM Porton Electrico version 2.1
+// FSM Porton Electrico version 2.2
+// Nuevo: Cmakelist
 // ESP32 + FreeRTOS + WiFi + MQTT aun sin funcionar
 
 #include <stdio.h>
@@ -17,8 +18,8 @@
 
 /* ================= WIFI / MQTT ================= */
 
-#define WIFI_SSID "Flia. Matos"
-#define WIFI_PASS "24091973"
+#define WIFI_SSID "Docentes_Administrativos"
+#define WIFI_PASS "Adm1N2584km"
 #define MQTT_BROKER_URI "mqtt://test.mosquitto.org"
 
 static const char *TAG = "PORTON";
@@ -143,7 +144,6 @@ void IO_Update(void)
     gpio_set_level(PIN_WARNING, io_out.warning);
 }
 
-
 /* ================= FSM ================= */
 void FSM_Run(void)
 {
@@ -252,10 +252,8 @@ void FSM_Run(void)
         if (!(io_in.fcc && io_in.fca))
             estado_siguiente = INIT;
         break;
-
     }
 }
-
 
 /* ================= MQTT ================= */
 
@@ -267,38 +265,37 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
     switch (event_id)
     {
     case MQTT_EVENT_CONNECTED:
-        
-        esp_mqtt_client_subscribe(mqtt_client, "porton/isa/open", 0);
-        esp_mqtt_client_subscribe(mqtt_client, "porton/isa/close", 0);
-        esp_mqtt_client_subscribe(mqtt_client, "porton/isa/pause", 0);
-        printf("MQTT conectado al broker");
+
+        esp_mqtt_client_subscribe(mqtt_client, "porton/isa/cmd", 0);
+        printf("\nMQTT conectado al broker %s\n", MQTT_BROKER_URI);
         return;
 
     case MQTT_EVENT_DISCONNECTED:
-        printf("MQTT desconectado");
+        printf("\nMQTT desconectado\n");
         return;
 
     case MQTT_EVENT_SUBSCRIBED:
-        printf("MQTT suscripcion exitosa");
+        printf("\nMQTT suscripcion exitosa\n");
         return;
     }
 
     if (event_id == MQTT_EVENT_DATA)
     {
 
-        if (strncmp(event->topic, "porton/isa/open", event->topic_len) == 0)
+        if (strncmp(event->data, "OPEN", event->data_len) == 0)
             bo_mqtt = 1;
-        else if (strncmp(event->topic, "porton/isa/close", event->topic_len) == 0)
+        else if (strncmp(event->data, "CLOSE", event->data_len) == 0)
             bc_mqtt = 1;
-        else if (strncmp(event->topic, "porton/isa/pause", event->topic_len) == 0)
+        else if (strncmp(event->data, "PAUSE", event->data_len) == 0)
             bp_mqtt = 1;
 
-        printf("MQTT msg en topic: %.*s", event->topic_len, event->topic);
+        printf("\nMQTT CMD recibido: %.*s\n", event->data_len, event->data);
     }
 }
 
 void mqtt_start(void)
 {
+    printf("\nIniciando MQTT hacia broker: %s\n", MQTT_BROKER_URI);
     esp_mqtt_client_config_t cfg = {
         .broker.address.uri = MQTT_BROKER_URI,
     };
@@ -308,7 +305,7 @@ void mqtt_start(void)
                                    mqtt_event_handler, NULL);
     esp_mqtt_client_start(mqtt_client);
 
-    printf("MQTT iniciado");
+    printf("\nMQTT iniciado\n");
 }
 
 /* ================= WIFI ================= */
@@ -319,13 +316,18 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
     {
         esp_wifi_connect();
-        printf("WiFi iniciado, conectando a AP...");
+        printf("\nWiFi iniciado. Conectando a SSID: %s\n", WIFI_SSID);
     }
-    else if (event_base == WIFI_EVENT && event_id == IP_EVENT_STA_GOT_IP)
+    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
     {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        printf("WiFi conectado, IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        printf("WiFi conectado a %s | IP: " IPSTR "\n", WIFI_SSID, IP2STR(&event->ip_info.ip));
         mqtt_start();
+    }
+    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
+    {
+        printf("\nWiFi desconectado, reintentando...\n");
+        esp_wifi_connect();
     }
 }
 
@@ -360,13 +362,24 @@ void wifi_init(void)
 
 void app_main(void)
 {
-    esp_log_level_set("*", ESP_LOG_INFO);
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
 
     IO_Init();
+
     // Prueba de lámparas: enciende todo por 1 segundo al arrancar
-    gpio_set_level(4, 1); gpio_set_level(5, 1); gpio_set_level(2, 1);
+    gpio_set_level(4, 1);
+    gpio_set_level(5, 1);
+    gpio_set_level(2, 1);
     vTaskDelay(pdMS_TO_TICKS(1000));
-    gpio_set_level(4, 0); gpio_set_level(5, 0); gpio_set_level(2, 0);
+    gpio_set_level(4, 0);
+    gpio_set_level(5, 0);
+    gpio_set_level(2, 0);
 
     wifi_init();
 
