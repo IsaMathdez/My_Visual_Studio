@@ -1,7 +1,8 @@
 // Isaias Matos
-// FSM Porton Electrico version 2.2
-// Nuevo: Cmakelist
-// ESP32 + FreeRTOS + WiFi + MQTT aun sin funcionar
+// FSM Porton Electrico version 2.3
+// Nuevo: Un solo boton
+// ESP32 + FreeRTOS + WiFi + MQTT 
+
 
 #include <stdio.h>
 #include <string.h>
@@ -27,9 +28,7 @@ static const char *TAG = "PORTON";
 /* ================= CONFIGURACIÓN DE PINES ================= */
 
 // Entradas
-#define PIN_BTN_OPEN 18
-#define PIN_BTN_CLOSE 19
-#define PIN_BTN_PAUSE 21
+#define PIN_BTN 18
 #define PIN_FCC 32
 #define PIN_FCA 33
 #define PIN_FCT 35
@@ -40,20 +39,18 @@ static const char *TAG = "PORTON";
 #define PIN_WARNING 2
 
 // Tiempos
-#define MOTOR_RUNTIME_MAX_MS 15000
-#define LOOP_PERIOD_MS 100
+#define MOTOR_RUNTIME_MAX_MS 15000 // 15 segundos, ajustable
+#define LOOP_PERIOD_MS 100 // 100 milisegundos
 #define WARNING_BLINK_MS 500
 
 /* ================= ESTRUCTURAS IO ================= */
 
 typedef struct
 {
-    int bo;
-    int bc;
-    int bp;
-    int fcc;
-    int fca;
-    int ftc;
+    int bo;  // Boton
+    int fcc; // Final de carrera NC 
+    int fca; // Final carrera NO
+    int ftc; // Sensor obstaculos
 } IO_Input;
 
 typedef struct
@@ -65,6 +62,8 @@ typedef struct
 
 static IO_Input io_in;
 static IO_Output io_out;
+uint8_t bo_last = 0;
+uint8_t bo_edge = 0;
 
 /* ================= FSM ================= */
 
@@ -81,19 +80,18 @@ typedef enum
 
 static estado_t estado_actual = INIT;
 static estado_t estado_siguiente = INIT;
+static estado_t ultimo_movimiento = CERRANDO; // valor inicial cualquiera válido
 
 static int motor_runtime = 0;
 static int warning_timer = 0;
 
 /* ================= FLAGS MQTT (botones virtuales) ================= */
 
-static int bo_mqtt = 0;
-static int bc_mqtt = 0;
-static int bp_mqtt = 0;
+static int btn_mqtt = 0;
 
 static esp_mqtt_client_handle_t mqtt_client;
 
-/* ================= IO ================= */
+/* ================= IOs ================= */
 
 void IO_Init(void)
 {
@@ -104,9 +102,7 @@ void IO_Init(void)
     io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     io_conf.pin_bit_mask =
-        (1ULL << PIN_BTN_OPEN) |
-        (1ULL << PIN_BTN_CLOSE) |
-        (1ULL << PIN_BTN_PAUSE) |
+        (1ULL << PIN_BTN) |
         (1ULL << PIN_FCC) |
         (1ULL << PIN_FCA) |
         (1ULL << PIN_FCT);
@@ -126,17 +122,15 @@ void IO_Init(void)
 
 void IO_Update(void)
 {
-    // Entradas físicas OR MQTT
-    io_in.bo = gpio_get_level(PIN_BTN_OPEN) | bo_mqtt;
-    io_in.bc = gpio_get_level(PIN_BTN_CLOSE) | bc_mqtt;
-    io_in.bp = gpio_get_level(PIN_BTN_PAUSE) | bp_mqtt;
+    // Entradas físicas o MQTT
+    io_in.bo = gpio_get_level(PIN_BTN) | btn_mqtt;
 
     io_in.fcc = gpio_get_level(PIN_FCC);
     io_in.fca = gpio_get_level(PIN_FCA);
     io_in.ftc = gpio_get_level(PIN_FCT);
 
     // Limpiar pulsos MQTT (1 ciclo)
-    bo_mqtt = bc_mqtt = bp_mqtt = 0;
+    btn_mqtt = 0;
 
     // Salidas
     gpio_set_level(PIN_MOTOR_A, io_out.motor_a);
@@ -171,7 +165,7 @@ void FSM_Run(void)
         io_out.motor_b = 0;
         io_out.warning = 0;
         printf("PORTON ABIERTO\n");
-        if (io_in.bc && !io_in.ftc && !io_in.fcc)
+        if (bo_edge && !io_in.ftc && !io_in.fcc)
         {
             motor_runtime = MOTOR_RUNTIME_MAX_MS / LOOP_PERIOD_MS;
             estado_siguiente = CERRANDO;
@@ -183,7 +177,7 @@ void FSM_Run(void)
         io_out.motor_b = 0;
         io_out.warning = 0;
         printf("PORTON CERRADO\n");
-        if (io_in.bo && !io_in.fca)
+        if (bo_edge && !io_in.fca)
         {
             motor_runtime = MOTOR_RUNTIME_MAX_MS / LOOP_PERIOD_MS;
             estado_siguiente = ABRIENDO;
@@ -195,15 +189,21 @@ void FSM_Run(void)
         io_out.motor_b = 0;
         io_out.warning = 0;
         printf("PORTON EN MEDIO\n");
-        if (io_in.bo && !io_in.fca)
+
+        if (bo_edge)
         {
             motor_runtime = MOTOR_RUNTIME_MAX_MS / LOOP_PERIOD_MS;
-            estado_siguiente = ABRIENDO;
-        }
-        else if (io_in.bc && !io_in.ftc && !io_in.fcc)
-        {
-            motor_runtime = MOTOR_RUNTIME_MAX_MS / LOOP_PERIOD_MS;
-            estado_siguiente = CERRANDO;
+
+            if (ultimo_movimiento == ABRIENDO && !io_in.fcc)
+            {
+                ultimo_movimiento = CERRANDO;
+                estado_siguiente = CERRANDO;
+            }
+            else if (ultimo_movimiento == CERRANDO && !io_in.fca)
+            {
+                ultimo_movimiento = ABRIENDO;
+                estado_siguiente = ABRIENDO;
+            }
         }
         break;
 
@@ -214,8 +214,11 @@ void FSM_Run(void)
         printf("ABRIENDO PORTON\n");
         if (motor_runtime <= 0)
             estado_siguiente = ERROR;
-        else if (io_in.bp)
+        else if (bo_edge)
+        {
+            ultimo_movimiento = ABRIENDO;
             estado_siguiente = EN_MEDIO;
+        }
         else if (io_in.fca)
             estado_siguiente = ABIERTO;
         else
@@ -231,8 +234,11 @@ void FSM_Run(void)
             estado_siguiente = ERROR;
         else if (io_in.ftc)
             estado_siguiente = ABRIENDO;
-        else if (io_in.bp)
+        else if (bo_edge)
+        {
+            ultimo_movimiento = CERRANDO;
             estado_siguiente = EN_MEDIO;
+        }
         else if (io_in.fcc)
             estado_siguiente = CERRADO;
         else
@@ -282,12 +288,8 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
     if (event_id == MQTT_EVENT_DATA)
     {
 
-        if (strncmp(event->data, "OPEN", event->data_len) == 0)
-            bo_mqtt = 1;
-        else if (strncmp(event->data, "CLOSE", event->data_len) == 0)
-            bc_mqtt = 1;
-        else if (strncmp(event->data, "PAUSE", event->data_len) == 0)
-            bp_mqtt = 1;
+        if (strncmp(event->data, "BOTON", event->data_len) == 0)
+            btn_mqtt = 1;
 
         printf("\nMQTT CMD recibido: %.*s\n", event->data_len, event->data);
     }
@@ -373,20 +375,30 @@ void app_main(void)
     IO_Init();
 
     // Prueba de lámparas: enciende todo por 1 segundo al arrancar
-    gpio_set_level(4, 1);
+    // Desactivar si ya se aplicaran las salidas al puente H
+    /*gpio_set_level(4, 1);
     gpio_set_level(5, 1);
     gpio_set_level(2, 1);
     vTaskDelay(pdMS_TO_TICKS(1000));
     gpio_set_level(4, 0);
     gpio_set_level(5, 0);
-    gpio_set_level(2, 0);
+    gpio_set_level(2, 0); */
 
     wifi_init();
 
     while (1)
     {
         IO_Update();
+
+        bo_edge = 0;
+        if (io_in.bo && !bo_last)
+        {
+            bo_edge = 1; // Se detectó flanco de subida
+        }
+        bo_last = io_in.bo;
+
         FSM_Run();
+
         vTaskDelay(pdMS_TO_TICKS(LOOP_PERIOD_MS));
     }
 }
