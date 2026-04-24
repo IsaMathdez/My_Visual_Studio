@@ -7,3 +7,5 @@ Agrengando nuevo commit con el repositorio ya agregado a mi github
 Tarea 1: COmpilar un hola mundo en un ESP32
 
 Tarea 2: Crear una FSM para un porton electrico y correrlo en un esp32.
+
+Tarea 3: Hacer un voltimetro sencillo para medir voltaje AC

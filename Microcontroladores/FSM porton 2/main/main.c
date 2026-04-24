@@ -29,17 +29,17 @@ static const char *TAG = "PORTON";
 
 // Entradas
 #define PIN_BTN 18
-#define PIN_FCC 32
-#define PIN_FCA 33
+#define PIN_FCC 5
+#define PIN_FCA 4
 #define PIN_FCT 35
 
 // Salidas
-#define PIN_MOTOR_A 4
-#define PIN_MOTOR_B 5
-#define PIN_WARNING 2
+#define PIN_MOTOR_A 2
+#define PIN_MOTOR_B 18
+#define PIN_WARNING 19
 
 // Tiempos
-#define MOTOR_RUNTIME_MAX_MS 15000 // 15 segundos, ajustable
+#define MOTOR_RUNTIME_MAX_MS 60000 // 15 segundos, ajustable
 #define LOOP_PERIOD_MS 100 // 100 milisegundos
 #define WARNING_BLINK_MS 500
 
