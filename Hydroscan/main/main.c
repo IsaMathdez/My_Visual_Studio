@@ -1,79 +1,589 @@
 
-/*Codigo prueba del sensor TDS con 333 ohm en serie*/
+// Version 3.4 SENSOR DE OLEAJE
+//
+// Base kept from version 3.3 (stable capture, memory layout, timing guards)
+// with the new frequency-domain wave-elevation estimation merged in.
+//
+// What this file does:
+// - Reads MPU6050 at 10 Hz over I2C (SDA=21, SCL=22)
+// - Collects bursts of 512 samples (~51.2 s)
+// - Estimates attitude with a complementary filter
+// - Removes gravity from the vertical acceleration
+// - Converts acceleration spectrum to wave-elevation spectrum
+// - Estimates significant wave height and wave periods with less drift
+// - Prints significant wave height, peak/mean periods, and a
+//   relative dominant direction in the sensor frame
+//
+// Important notes:
+// - The direction produced here is RELATIVE to the sensor/body frame.
+//   Absolute geographic wave direction needs a heading reference (magnetometer,
+//   GNSS course-over-ground, or a known fixed orientation of the buoy).
+// - For very small waves (e.g. ~4 cm peak-to-crest), mechanical stability,
+//   calibration, and filtering are critical.
+// - This version prints results to the serial console (ESP-IDF monitor).
+//
+// Fixes in this version:
+// - Frequency-domain integration is used for wave height / period estimation.
+// - The DFT loop yields periodically so the ESP32 watchdog remains happy.
+// - The rest of the timing and buffer structure remains close to version 3.3.
 
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdbool.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
+#include "esp_err.h"
+#include "esp_heap_caps.h"
+#include "driver/i2c.h"
 
-#define ADC_UNIT           ADC_UNIT_1        
-#define ADC_CHANNEL        ADC_CHANNEL_0     // GPIO 36 (Pin VP)
-#define ADC_ATTEN          ADC_ATTEN_DB_12   
-#define ADC_BITWIDTH       ADC_BITWIDTH_12   
+#define TAG "WAVE_BUOY"
 
-#define VREF               3.3               
-#define MUESTRAS           30                
+// -------------------- I2C / MPU6050 --------------------
+#define I2C_PORT I2C_NUM_0
+#define I2C_SDA_PIN 21
+#define I2C_SCL_PIN 22
+#define I2C_FREQ_HZ 400000
 
-static const char *TAG = "BOYA_TDS_V2";
+#define MPU6050_ADDR 0x68
 
-void app_main(void) {
-    // Inicialización del ADC
-    adc_oneshot_unit_handle_t adc1_handle;
-    adc_oneshot_unit_init_cfg_t init_config1 = { .unit_id = ADC_UNIT };
-    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &adc1_handle));
+#define MPU_PWR_MGMT_1 0x6B
+#define MPU_SMPLRT_DIV 0x19
+#define MPU_CONFIG 0x1A
+#define MPU_GYRO_CONFIG 0x1B
+#define MPU_ACCEL_CONFIG 0x1C
+#define MPU_ACCEL_XOUT_H 0x3B
 
-    adc_oneshot_chan_cfg_t config = { .bitwidth = ADC_BITWIDTH, .atten = ADC_ATTEN };
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL, &config));
+// -------------------- Sampling / processing --------------------
+#define SAMPLE_RATE_HZ 10.0f
+#define DT (1.0f / SAMPLE_RATE_HZ)
 
-    ESP_LOGI(TAG, "Curva de calibración optimizada aplicada. Monitoreando...");
+#define BURST_DURATION_SEC 60
+#define WAIT_BETWEEN_BURSTS_SEC 5
 
-    while (1) {
-        int acumulador_adc = 0;
-        int lectura_cruda = 0;
+#define BURST_SAMPLES \
+    ((int)(SAMPLE_RATE_HZ * BURST_DURATION_SEC))
 
-        for (int i = 0; i < MUESTRAS; i++) {
-            ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL, &lectura_cruda));
-            acumulador_adc += lectura_cruda;
-            vTaskDelay(pdMS_TO_TICKS(15)); 
+#define BURST_SECONDS \
+    ((float)BURST_DURATION_SEC)
+
+// Band limits used when integrating acceleration PSD -> elevation PSD.
+// These help avoid excessive amplification of DC / very low frequency drift.
+#define WAVE_MIN_HZ 0.05f
+#define WAVE_MAX_HZ 2.0f
+
+// MPU6050 scale factors for configured ranges:
+// Accel ±2g -> 16384 LSB/g
+// Gyro ±250 dps -> 131 LSB/(deg/s)
+#define ACC_LSB_PER_G 16384.0f
+#define GYRO_LSB_PER_DPS 131.0f
+#define G0 9.80665f
+
+static const float ALPHA_CF = 0.98f; // Complementary filter weight
+
+// Buffers globales para evitar Stack Overflow
+static float heave[BURST_SAMPLES];
+static float roll_hist[BURST_SAMPLES];
+static float pitch_hist[BURST_SAMPLES];
+
+static float eta[BURST_SAMPLES];
+static float r[BURST_SAMPLES];
+static float p[BURST_SAMPLES];
+
+static float acc[BURST_SAMPLES];
+static float vel[BURST_SAMPLES];
+static float disp[BURST_SAMPLES];
+
+// -------------------- Small structs --------------------
+typedef struct
+{
+    int16_t ax, ay, az;
+    int16_t temp;
+    int16_t gx, gy, gz;
+} mpu_raw_t;
+
+typedef struct
+{
+    float ax_g, ay_g, az_g;
+    float gx_rads, gy_rads, gz_rads;
+} mpu_phys_t;
+
+// -------------------- I2C helpers --------------------
+static esp_err_t i2c_write_byte(uint8_t dev_addr, uint8_t reg_addr, uint8_t data)
+{
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (dev_addr << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_write_byte(cmd, reg_addr, true);
+    i2c_master_write_byte(cmd, data, true);
+    i2c_master_stop(cmd);
+    esp_err_t err = i2c_master_cmd_begin(I2C_PORT, cmd, pdMS_TO_TICKS(1000));
+    i2c_cmd_link_delete(cmd);
+    return err;
+}
+
+static esp_err_t i2c_read_bytes(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, size_t len)
+{
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (dev_addr << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_write_byte(cmd, reg_addr, true);
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (dev_addr << 1) | I2C_MASTER_READ, true);
+    if (len > 1)
+    {
+        i2c_master_read(cmd, data, len - 1, I2C_MASTER_ACK);
+    }
+    i2c_master_read_byte(cmd, data + len - 1, I2C_MASTER_NACK);
+    i2c_master_stop(cmd);
+    esp_err_t err = i2c_master_cmd_begin(I2C_PORT, cmd, pdMS_TO_TICKS(1000));
+    i2c_cmd_link_delete(cmd);
+    return err;
+}
+
+static esp_err_t mpu6050_read_raw(mpu_raw_t *raw)
+{
+    uint8_t buf[14];
+    esp_err_t err = i2c_read_bytes(MPU6050_ADDR, MPU_ACCEL_XOUT_H, buf, sizeof(buf));
+    if (err != ESP_OK)
+        return err;
+
+    raw->ax = (int16_t)((buf[0] << 8) | buf[1]);
+    raw->ay = (int16_t)((buf[2] << 8) | buf[3]);
+    raw->az = (int16_t)((buf[4] << 8) | buf[5]);
+    raw->temp = (int16_t)((buf[6] << 8) | buf[7]);
+    raw->gx = (int16_t)((buf[8] << 8) | buf[9]);
+    raw->gy = (int16_t)((buf[10] << 8) | buf[11]);
+    raw->gz = (int16_t)((buf[12] << 8) | buf[13]);
+    return ESP_OK;
+}
+
+static esp_err_t mpu6050_init(void)
+{
+    esp_err_t err;
+
+    // Wake up
+    err = i2c_write_byte(MPU6050_ADDR, MPU_PWR_MGMT_1, 0x00);
+    if (err != ESP_OK)
+        return err;
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    // Sample rate
+    err = i2c_write_byte(MPU6050_ADDR, MPU_SMPLRT_DIV, 99);
+    if (err != ESP_OK)
+        return err;
+
+    // DLPF
+    err = i2c_write_byte(MPU6050_ADDR, MPU_CONFIG, 0x03);
+    if (err != ESP_OK)
+        return err;
+
+    // Gyro ±250 dps
+    err = i2c_write_byte(MPU6050_ADDR, MPU_GYRO_CONFIG, 0x00);
+    if (err != ESP_OK)
+        return err;
+
+    // Accel ±2g
+    err = i2c_write_byte(MPU6050_ADDR, MPU_ACCEL_CONFIG, 0x00);
+    if (err != ESP_OK)
+        return err;
+
+    return ESP_OK;
+}
+
+// -------------------- Calibration --------------------
+static void calibrate_gyro(float *gx_bias_rads, float *gy_bias_rads, float *gz_bias_rads)
+{
+    const int n = 300;
+    double sx = 0, sy = 0, sz = 0;
+    mpu_raw_t raw;
+
+    ESP_LOGI(TAG, "Calibrando giroscopio... mantén la boya quieta");
+    for (int i = 0; i < n; i++)
+    {
+        if (mpu6050_read_raw(&raw) == ESP_OK)
+        {
+            sx += raw.gx;
+            sy += raw.gy;
+            sz += raw.gz;
         }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
 
-        float promedio_adc = (float)acumulador_adc / MUESTRAS;
-        float voltaje = (promedio_adc * VREF) / 4095.0;
+    float gx_dps = (float)(sx / n) / GYRO_LSB_PER_DPS;
+    float gy_dps = (float)(sy / n) / GYRO_LSB_PER_DPS;
+    float gz_dps = (float)(sz / n) / GYRO_LSB_PER_DPS;
 
-        // --- NUEVA ECUACIÓN AJUSTADA A 333 OHM ---
-        float salinidad_ppm = 0.0;
-        
-        if (voltaje >= 0.40) {
-            // Regresión cuadrática exacta para el rango de 333 Ohm
-            salinidad_ppm = (26928.5714 * pow(voltaje, 2)) - (42878.5714 * voltaje) + 13042.8571;
-        } else {
-            // Protección por si la sonda se saca del agua o baja de 0.4V
-            salinidad_ppm = 0.0; 
-        }
+    *gx_bias_rads = gx_dps * (float)M_PI / 180.0f;
+    *gy_bias_rads = gy_dps * (float)M_PI / 180.0f;
+    *gz_bias_rads = gz_dps * (float)M_PI / 180.0f;
 
+    ESP_LOGI(TAG, "Bias gyro: gx=%.6f rad/s, gy=%.6f rad/s, gz=%.6f rad/s",
+             *gx_bias_rads, *gy_bias_rads, *gz_bias_rads);
 
-        // --- SALIDA POR CONSOLA DE TELEMETRÍA ---
-        printf("\n==================================================\n");
-        printf("       TELEMETRÍA ACTUALIZADA DE LA BOYA         \n");
-        printf("--------------------------------------------------\n");
-        printf("Voltaje leído     : %.3f V\n", voltaje);
-        printf("Salinidad Mapeada : %.0f ppm\n", salinidad_ppm);
-        printf("Análisis Marítimo : ");
-        // --- AJUSTE DE ALERTAS POR PANTALLA (Modifica solo los umbrales de voltaje) ---
-        if (voltaje >= 1.95 && voltaje <= 2.05) {
-            printf("[ AGUA DE MAR TRADICIONAL ]\n");
-            printf("Lectura óptima y esperada para aguas oceánicas.\n");
-        } else if (voltaje > 2.05) {
-            printf("[ ALTA CONCENTRACIÓN / HIPERSALINIDAD ]\n");
-        } else if (voltaje >= 0.60 && voltaje < 1.95) {
-            printf("[ AMBIENTE SALOBRE / TRANSICIÓN ]\n");
-        } else {
-            printf("[ RECURSO DULCE / AGUA DE INTERIOR ]\n");
-        }
-        printf("--------------------------------------------------\n\n");
+    ESP_LOGI(TAG, "Heap libre: %lu bytes",
+             (unsigned long)esp_get_free_heap_size());
+}
 
-        vTaskDelay(pdMS_TO_TICKS(2000));
+// -------------------- Signal helpers --------------------
+static void remove_mean(float *x, int n)
+{
+    double sum = 0.0;
+    for (int i = 0; i < n; i++)
+        sum += x[i];
+    float mean = (float)(sum / n);
+    for (int i = 0; i < n; i++)
+        x[i] -= mean;
+}
+
+static void detrend_linear(float *x, int n)
+{
+    // Least-squares fit y = a*i + b
+    double sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+        double xi = (double)i;
+        double yi = (double)x[i];
+        sx += xi;
+        sy += yi;
+        sxx += xi * xi;
+        sxy += xi * yi;
+    }
+
+    double denom = (n * sxx - sx * sx);
+    if (fabs(denom) < 1e-12)
+        return;
+
+    double a = (n * sxy - sx * sy) / denom;
+    double b = (sy - a * sx) / n;
+
+    for (int i = 0; i < n; i++)
+    {
+        x[i] -= (float)(a * i + b);
     }
 }
+
+static float mean_square(const float *x, int n)
+{
+    double s = 0.0;
+    for (int i = 0; i < n; i++)
+        s += (double)x[i] * (double)x[i];
+    return (float)(s / n);
+}
+
+static float stddev(const float *x, int n)
+{
+    double s = 0.0, ss = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+        s += x[i];
+        ss += (double)x[i] * (double)x[i];
+    }
+    double m = s / n;
+    double v = (ss / n) - m * m;
+    if (v < 0)
+        v = 0;
+    return (float)sqrt(v);
+}
+
+// -------------------- DFT / spectral moments --------------------
+// Returns moments m0, m1, m2 from the acceleration spectrum after
+// converting it to the equivalent wave-elevation spectrum in the
+// frequency domain: S_eta(f) = S_a(f) / (2*pi*f)^4.
+static void compute_wave_moments_from_accel(const float *a_mss, int n, float fs,
+                                            float *m0, float *m1, float *m2,
+                                            float *f_peak)
+{
+    const int kmax = n / 2;
+    const float df = fs / n;
+
+    double a_sum = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+        a_sum += a_mss[i];
+    }
+    const float a_mean = (float)(a_sum / n);
+
+    // Hann window power correction
+    double wsum2 = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+        float w = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / (n - 1)));
+        wsum2 += (double)w * (double)w;
+    }
+    const float U = (float)(wsum2 / n);
+
+    float local_m0 = 0.0f;
+    float local_m1 = 0.0f;
+    float local_m2 = 0.0f;
+    float local_fpeak = 0.0f;
+    float local_peak_power = -1.0f;
+
+    for (int k = 0; k <= kmax; k++)
+    {
+        double re = 0.0;
+        double im = 0.0;
+
+        for (int n0 = 0; n0 < n; n0++)
+        {
+            float w = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * n0 / (n - 1)));
+            float xn = (a_mss[n0] - a_mean) * w;
+            double ang = -2.0 * M_PI * k * n0 / n;
+            re += xn * cos(ang);
+            im += xn * sin(ang);
+        }
+
+        double mag2 = re * re + im * im;
+
+        // One-sided acceleration PSD estimate.
+        float Paa;
+        if (k == 0 || k == kmax)
+        {
+            Paa = (float)(mag2 / ((double)n * (double)n * U));
+        }
+        else
+        {
+            Paa = (float)(2.0 * mag2 / ((double)n * (double)n * U));
+        }
+
+        float f = k * df;
+        if (f < WAVE_MIN_HZ || f > WAVE_MAX_HZ)
+        {
+            continue;
+        }
+
+        // Convert acceleration PSD to elevation PSD by dividing by omega^4.
+        float omega = 2.0f * (float)M_PI * f;
+        float omega2 = omega * omega;
+        float Peta = Paa / (omega2 * omega2);
+
+        local_m0 += Peta;
+        local_m1 += f * Peta;
+        local_m2 += f * f * Peta;
+
+        if (Peta > local_peak_power)
+        {
+            local_peak_power = Peta;
+            local_fpeak = f;
+        }
+
+        // Keep the task watchdog happy during long spectral windows.
+        if ((k % 10) == 0)
+        {
+            vTaskDelay(1);
+        }
+    }
+
+    *m0 = local_m0 * df;
+    *m1 = local_m1 * df;
+    *m2 = local_m2 * df;
+    *f_peak = local_fpeak;
+}
+
+// -------------------- Main processing --------------------
+static void process_burst(const float *acc_mss, const float *roll_rad, const float *pitch_rad, int n)
+{
+    // Copy into scratch buffers so we can reuse the original names.
+    memcpy(eta, acc_mss, sizeof(float) * n);
+    memcpy(r, roll_rad, sizeof(float) * n);
+    memcpy(p, pitch_rad, sizeof(float) * n);
+
+    // Prepare acceleration for spectral integration.
+    remove_mean(eta, n);
+    detrend_linear(eta, n);
+    remove_mean(r, n);
+    remove_mean(p, n);
+
+    // Spectral analysis on vertical acceleration converted to elevation spectrum.
+    float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f, fp = 0.0f;
+    compute_wave_moments_from_accel(eta, n, SAMPLE_RATE_HZ, &m0, &m1, &m2, &fp);
+
+    float Hs_spec = 4.0f * sqrtf(fmaxf(m0, 0.0f));
+    float sigma_eta = sqrtf(fmaxf(m0, 0.0f));
+    float Tp = (fp > 1e-6f) ? (1.0f / fp) : 0.0f;
+    float Tm01 = (m1 > 1e-9f) ? (m0 / m1) : 0.0f;
+    float Tm02 = (m2 > 1e-9f) ? sqrtf(m0 / m2) : 0.0f;
+
+    // Relative direction: principal axis of roll/pitch ellipse in sensor frame.
+    float var_r = mean_square(r, n);
+    float var_p = mean_square(p, n);
+    float cov_rp = 0.0f;
+    for (int i = 0; i < n; i++)
+        cov_rp += r[i] * p[i];
+    cov_rp /= n;
+
+    float dir_rad = 0.5f * atan2f(2.0f * cov_rp, var_r - var_p);
+    float dir_deg = dir_rad * 180.0f / (float)M_PI;
+    if (dir_deg < 0)
+        dir_deg += 180.0f; // principal axis is 0..180 deg
+
+    // Simple crest-to-trough estimate within the burst (debug only).
+    float eta_min = eta[0], eta_max = eta[0];
+    for (int i = 1; i < n; i++)
+    {
+        if (eta[i] < eta_min)
+            eta_min = eta[i];
+        if (eta[i] > eta_max)
+            eta_max = eta[i];
+    }
+    float peak_to_crest = eta_max - eta_min;
+
+    // Seleccionamos las variables mas representativas
+    float Hs = Hs_spec;           // Altura significativa
+    float periodo_marino = Tm02;  // Periodo medio de cruce por cero espectral
+    float direccion_ola_deg = dir_deg;
+
+    // --- REPORTE OCEANOGRAFICO AVANZADO ---
+    printf("\n=================================================================\n");
+    printf(" 🌊   REPORTE DE OLEAJE PROCESADO (METODO ESPECTRAL ESTIMADO)   \n");
+    printf("=================================================================\n");
+    printf(" [MUESTREO] Duracion de Rafaga: %.1f segundos (%d muestras)\n", BURST_SECONDS, BURST_SAMPLES);
+    printf("-----------------------------------------------------------------\n");
+    printf(" [METRICA] Altura Significativa (Hs) : %.2f metros\n", Hs);
+    printf(" [METRICA] Periodo Medio de Ola (Tz) : %.1f segundos\n", periodo_marino);
+    printf(" [METRICA] Direccion Dominante       : %.1f deg (Angulo de Ataque)\n", direccion_ola_deg);
+    printf("-----------------------------------------------------------------\n");
+    printf(" [ESTADO DEL MAR] Escala Beaufort Est.: ");
+
+    if (Hs < 0.1f)
+        printf("Mar Espejo / Calma Absoluta\n");
+    else if (Hs < 0.5f)
+        printf("Mar Rizada (Olas pequenas y cortas)\n");
+    else if (Hs < 1.25f)
+        printf("Marejadilla (Olas de viento local)\n");
+    else if (Hs < 2.5f)
+        printf("Marejada (Oleaje Oceanico Firme)\n");
+    else
+        printf("Fuerte Marejada (Condiciones Criticas en Costa)\n");
+
+    printf("=================================================================\n");
+
+    // Datos tecnicos opcionales para depuracion
+    printf(" [DEBUG] Hs espectral : %.3f m\n", Hs_spec);
+    printf(" [DEBUG] Tm01         : %.3f s\n", Tm01);
+    printf(" [DEBUG] Tp           : %.3f s\n", Tp);
+    printf(" [DEBUG] f_pico       : %.3f Hz\n", fp);
+    printf(" [DEBUG] sigma(eta)   : %.4f m\n", sigma_eta);
+    printf(" [DEBUG] Pico-cresta  : %.3f m\n", peak_to_crest);
+    printf("=================================================================\n");
+}
+
+// -------------------- app_main --------------------
+void app_main(void)
+{
+    // I2C init
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_SDA_PIN,
+        .scl_io_num = I2C_SCL_PIN,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_FREQ_HZ,
+        .clk_flags = 0,
+    };
+
+    ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &conf));
+    ESP_ERROR_CHECK(i2c_driver_install(I2C_PORT, conf.mode, 0, 0, 0));
+    ESP_LOGI(TAG, "I2C inicializado en SDA=%d, SCL=%d\n", I2C_SDA_PIN, I2C_SCL_PIN);
+
+    ESP_ERROR_CHECK(mpu6050_init());
+    ESP_LOGI(TAG, "MPU6050 listo\n");
+
+    float gx_bias = 0.0f, gy_bias = 0.0f, gz_bias = 0.0f;
+    calibrate_gyro(&gx_bias, &gy_bias, &gz_bias);
+
+    float roll = 0.0f, pitch = 0.0f;
+    bool first_attitude = true;
+
+    int idx = 0;
+    TickType_t last_wake = xTaskGetTickCount();
+
+    ESP_LOGI(TAG, "Entrando al while principal\n");
+
+    while (1)
+    {
+        // Keep a fixed sample rate around 10 Hz
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS((int)(1000.0f / SAMPLE_RATE_HZ)));
+
+        mpu_raw_t raw;
+        if (mpu6050_read_raw(&raw) != ESP_OK)
+        {
+            ESP_LOGW(TAG, "No se pudo leer MPU6050\n");
+            continue;
+        }
+
+        mpu_phys_t s;
+        s.ax_g = (float)raw.ax / ACC_LSB_PER_G;
+        s.ay_g = (float)raw.ay / ACC_LSB_PER_G;
+        s.az_g = (float)raw.az / ACC_LSB_PER_G;
+        s.gx_rads = ((float)raw.gx / GYRO_LSB_PER_DPS) * (float)M_PI / 180.0f - gx_bias;
+        s.gy_rads = ((float)raw.gy / GYRO_LSB_PER_DPS) * (float)M_PI / 180.0f - gy_bias;
+        s.gz_rads = ((float)raw.gz / GYRO_LSB_PER_DPS) * (float)M_PI / 180.0f - gz_bias;
+
+        // Estimate roll/pitch from accelerometer
+        float roll_acc = atan2f(s.ay_g, s.az_g);
+        float pitch_acc = atan2f(-s.ax_g, sqrtf(s.ay_g * s.ay_g + s.az_g * s.az_g));
+
+        // Complementary filter
+        if (first_attitude)
+        {
+            roll = roll_acc;
+            pitch = pitch_acc;
+            first_attitude = false;
+        }
+        else
+        {
+            roll = ALPHA_CF * (roll + s.gx_rads * DT) + (1.0f - ALPHA_CF) * roll_acc;
+            pitch = ALPHA_CF * (pitch + s.gy_rads * DT) + (1.0f - ALPHA_CF) * pitch_acc;
+        }
+
+        // Rotate accelerometer vector to earth frame (z-up convention)
+        float az_earth_g = -s.ax_g * sinf(pitch) + s.ay_g * sinf(roll) * cosf(pitch) + s.az_g * cosf(roll) * cosf(pitch);
+
+        // Remove gravity (1 g) -> dynamic vertical acceleration
+        float a_z_dyn_mss = (az_earth_g - 1.0f) * G0;
+
+        // Store history for burst processing
+        if (idx < BURST_SAMPLES)
+        {
+            heave[idx] = a_z_dyn_mss;
+            roll_hist[idx] = roll;
+            pitch_hist[idx] = pitch;
+            idx++;
+        }
+
+        // When burst is full, process it
+        if (idx >= BURST_SAMPLES)
+        {
+            printf("\nProcediendo a procesar la rafaga...\n");
+
+            process_burst(heave, roll_hist, pitch_hist, BURST_SAMPLES);
+
+            vTaskDelay(pdMS_TO_TICKS(10)); // Agregado
+
+            printf("=============================================================\n");
+            printf(" Esperando %d segundos para la proxima rafaga...\n",
+                   WAIT_BETWEEN_BURSTS_SEC);
+            printf("=============================================================\n");
+
+            vTaskDelay(pdMS_TO_TICKS(
+                WAIT_BETWEEN_BURSTS_SEC * 1000));
+
+            // Reset for the next burst
+            idx = 0;
+            memset(heave, 0, sizeof(heave));
+            memset(roll_hist, 0, sizeof(roll_hist));
+            memset(pitch_hist, 0, sizeof(pitch_hist));
+
+            // Re-lock timing to avoid accumulated drift from processing time
+            last_wake = xTaskGetTickCount();
+
+            printf("\nProcediendo a recibir la rafaga...\n");
+        }
+    }
+}
+
