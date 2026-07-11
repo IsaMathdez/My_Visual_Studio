@@ -1,5 +1,7 @@
 
-/*Codigo prueba del sensor TDS con 333 ohm en serie*/
+// Codigo prueba del sensor TDS con 333 ohm en serie
+// Funcionando a un 90%, falta corregir una ecuacion de calibracion mas precisa para el rango de 333 ohm, 
+// actualmente esta ajustada para 1k ohm
 
 #include <stdio.h>
 #include <math.h>
