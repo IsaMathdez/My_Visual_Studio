@@ -1,7 +1,7 @@
 
-// Version 3.4 SENSOR DE OLEAJE
+// Version 3.6b SENSOR DE OLEAJE
 //
-// Base kept from version 3.3 (stable capture, memory layout, timing guards)
+// Base kept from version 3.6 (stable capture, memory layout, timing guards)
 // with the new frequency-domain wave-elevation estimation merged in.
 //
 // What this file does:
@@ -72,8 +72,8 @@
 
 // Band limits used when integrating acceleration PSD -> elevation PSD.
 // These help avoid excessive amplification of DC / very low frequency drift.
-#define WAVE_MIN_HZ 0.05f
-#define WAVE_MAX_HZ 2.0f
+#define WAVE_MIN_HZ 0.12f // Estaba en 0.05
+#define WAVE_MAX_HZ 1.0f  // Estaba en 2.0
 
 // MPU6050 scale factors for configured ranges:
 // Accel ±2g -> 16384 LSB/g
@@ -82,7 +82,7 @@
 #define GYRO_LSB_PER_DPS 131.0f
 #define G0 9.80665f
 
-static const float ALPHA_CF = 0.98f; // Complementary filter weight
+static const float ALPHA_CF = 0.98f; // Complementary filter weight, changed from 0.98 to 0.995 for better low-frequency response
 
 // Buffers globales para evitar Stack Overflow
 static float heave[BURST_SAMPLES];
@@ -96,6 +96,25 @@ static float p[BURST_SAMPLES];
 static float acc[BURST_SAMPLES];
 static float vel[BURST_SAMPLES];
 static float disp[BURST_SAMPLES];
+
+// added
+static float debug_freq[256];
+static float debug_peta[256];
+static int debug_bins = 0;
+
+// -------------------- Hydrodynamic model (RAO) --------------------
+
+// Natural frequency of the buoy (Hz)
+static const float BUOY_FN = 0.28f;
+
+// Damping ratio
+static const float BUOY_ZETA = 0.65f;
+
+// Scale factor after hydrodynamic compensation
+//static const float HS_SCALE = 1.00f;
+
+// Weight between spectral estimator and temporal estimator
+//static const float HS_BLEND = 0.75f;
 
 // -------------------- Small structs --------------------
 typedef struct
@@ -290,6 +309,95 @@ static float stddev(const float *x, int n)
     return (float)sqrt(v);
 }
 
+// ------------------------------------------------------------
+// Response Amplitude Operator (RAO)
+// Simplified second-order hydrodynamic response of the buoy.
+//
+// Returns the response magnitude |H(f)|.
+//
+// f : wave frequency (Hz)
+// ------------------------------------------------------------
+static float compute_buoy_rao(float f)
+{
+    float wn = 2.0f * (float)M_PI * BUOY_FN;
+    float w = 2.0f * (float)M_PI * f;
+
+    float a = wn * wn - w * w;
+    float b = 2.0f * BUOY_ZETA * wn * w;
+
+    float H = (wn * wn) / sqrtf(a * a + b * b);
+
+    // Prevent divisions by very small values
+    if (H < 0.20f)
+        H = 0.20f;
+
+    return H;
+}
+
+// ------------------------------------------------------------
+// Time-domain estimator of significant wave height.
+//
+// Estimates Hs directly from the RMS vertical acceleration.
+// This estimator is later fused with the spectral estimator.
+//
+// acc_mss : vertical acceleration (m/s²)
+// n       : number of samples
+// ------------------------------------------------------------
+//===============================================================
+// Estimador de Hs basado en aceleración RMS + frecuencia dominante
+//===============================================================
+static float estimate_hs_from_rms(float acc_rms, float fp)
+{
+    if (fp < 0.05f)
+        return 0.0f;
+
+    // Frecuencia angular
+    float omega = 2.0f * (float)M_PI * fp;
+
+    // RAO de la boya
+    float rao = compute_buoy_rao(fp);
+
+    // Desplazamiento RMS de la boya
+    float eta_rms = acc_rms / (omega * omega);
+
+    // Corregir por la respuesta dinámica
+    eta_rms /= rao;
+
+    // Convertir RMS a altura significativa
+    float hs = 4.0f * eta_rms;
+
+    // Evitar valores negativos
+    if (hs < 0.0f)
+        hs = 0.0f;
+
+    return hs;
+}
+
+static float compute_wave_band_rms(void)
+{
+    float energy = 0.0f;
+
+    const float HS_MIN_HZ = 0.05f;
+    const float HS_MAX_HZ = 1.00f;
+
+    for(int i=0;i<debug_bins;i++)
+    {
+        float f = debug_freq[i];
+
+        if(f < HS_MIN_HZ)
+            continue;
+
+        if(f > HS_MAX_HZ)
+            continue;
+
+        energy += debug_peta[i];
+    }
+
+    energy *= (SAMPLE_RATE_HZ / BURST_SAMPLES);
+
+    return sqrtf(fmaxf(energy,0.0f));
+}
+
 // -------------------- DFT / spectral moments --------------------
 // Returns moments m0, m1, m2 from the acceleration spectrum after
 // converting it to the equivalent wave-elevation spectrum in the
@@ -323,8 +431,16 @@ static void compute_wave_moments_from_accel(const float *a_mss, int n, float fs,
     float local_fpeak = 0.0f;
     float local_peak_power = -1.0f;
 
+    debug_bins = 0;
+
     for (int k = 0; k <= kmax; k++)
     {
+        // Keep the task watchdog happy during long spectral windows.
+        if ((k % 10) == 0)
+        {
+            vTaskDelay(1);
+        }
+
         double re = 0.0;
         double im = 0.0;
 
@@ -361,6 +477,13 @@ static void compute_wave_moments_from_accel(const float *a_mss, int n, float fs,
         float omega2 = omega * omega;
         float Peta = Paa / (omega2 * omega2);
 
+        if (debug_bins < 256)
+        {
+            debug_freq[debug_bins] = f;
+            debug_peta[debug_bins] = Peta;
+            debug_bins++;
+        }
+
         local_m0 += Peta;
         local_m1 += f * Peta;
         local_m2 += f * f * Peta;
@@ -370,13 +493,37 @@ static void compute_wave_moments_from_accel(const float *a_mss, int n, float fs,
             local_peak_power = Peta;
             local_fpeak = f;
         }
+    }
 
-        // Keep the task watchdog happy during long spectral windows.
-        if ((k % 10) == 0)
+    printf("\n");
+    printf("========= TOP PICOS ESPECTRALES =========\n");
+
+    for (int nprint = 0; nprint < 10; nprint++)
+    {
+        int idx_max = -1;
+        float max_val = -1.0f;
+
+        for (int i = 0; i < debug_bins; i++)
         {
-            vTaskDelay(1);
+            if (debug_peta[i] > max_val)
+            {
+                max_val = debug_peta[i];
+                idx_max = i;
+            }
+        }
+
+        if (idx_max >= 0)
+        {
+            printf("%2d) f=%.3f Hz   Peta=%e\n",
+                   nprint + 1,
+                   debug_freq[idx_max],
+                   debug_peta[idx_max]);
+
+            debug_peta[idx_max] = -1.0f;
         }
     }
+
+    printf("=========================================\n");
 
     *m0 = local_m0 * df;
     *m1 = local_m1 * df;
@@ -402,8 +549,8 @@ static void process_burst(const float *acc_mss, const float *roll_rad, const flo
     float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f, fp = 0.0f;
     compute_wave_moments_from_accel(eta, n, SAMPLE_RATE_HZ, &m0, &m1, &m2, &fp);
 
-    float Hs_spec = 4.0f * sqrtf(fmaxf(m0, 0.0f));
-    float sigma_eta = sqrtf(fmaxf(m0, 0.0f));
+    printf("m0 = %.8e\n", m0);
+
     float Tp = (fp > 1e-6f) ? (1.0f / fp) : 0.0f;
     float Tm01 = (m1 > 1e-9f) ? (m0 / m1) : 0.0f;
     float Tm02 = (m2 > 1e-9f) ? sqrtf(m0 / m2) : 0.0f;
@@ -432,10 +579,41 @@ static void process_burst(const float *acc_mss, const float *roll_rad, const flo
     }
     float peak_to_crest = eta_max - eta_min;
 
-    // Seleccionamos las variables mas representativas
-    float Hs = Hs_spec;           // Altura significativa
-    float periodo_marino = Tm02;  // Periodo medio de cruce por cero espectral
+    // Seleccionamos las variables mas representativas      
+    float periodo_marino = Tp; // Periodo medio de cruce por cero espectral
     float direccion_ola_deg = dir_deg;
+
+    float acc_rms = 0.0f;
+
+    for (int i = 0; i < n; i++)
+    {
+        acc_rms += acc_mss[i] * acc_mss[i];
+    }
+
+    acc_rms = sqrtf(acc_rms / n);
+
+    float Hs_rao = estimate_hs_from_rms(acc_rms, fp);
+
+    float eta_rms_band = compute_wave_band_rms();
+
+    //------------------------------------------------------
+    // Nuevo estimador físico de Hs (Versión 3.6)
+    //------------------------------------------------------
+
+    // float Hs = estimate_hs_from_rms(acc_rms, fp);
+    float RAO = compute_buoy_rao(fp);
+
+    float Hs = Hs_rao;
+
+    // Nivel mínimo de movimiento para considerar que existe oleaje
+    const float ACC_RMS_THRESHOLD = 0.15f;
+
+    if (acc_rms < ACC_RMS_THRESHOLD)
+    {
+        Hs = 0.0f;
+        Tp = 0.0f;
+        fp = 0.0f;
+    }
 
     // --- REPORTE OCEANOGRAFICO AVANZADO ---
     printf("\n=================================================================\n");
@@ -463,11 +641,15 @@ static void process_burst(const float *acc_mss, const float *roll_rad, const flo
     printf("=================================================================\n");
 
     // Datos tecnicos opcionales para depuracion
-    printf(" [DEBUG] Hs espectral : %.3f m\n", Hs_spec);
+    printf(" [DEBUG] Hs RAO       : %.3f m\n", Hs_rao);
     printf(" [DEBUG] Tm01         : %.3f s\n", Tm01);
     printf(" [DEBUG] Tp           : %.3f s\n", Tp);
     printf(" [DEBUG] f_pico       : %.3f Hz\n", fp);
-    printf(" [DEBUG] sigma(eta)   : %.4f m\n", sigma_eta);
+    printf(" [DEBUG] Periodo Pico: %.2f s\n", (fp > 0.001f) ? (1.0f / fp) : 0.0f);
+    printf(" [DEBUG] Acc RMS     : %.4f m/s²\n", acc_rms);
+    printf(" [DEBUG] Eta RMS banda : %.4f m\n", eta_rms_band);
+    printf(" [DEBUG] RAO           : %.3f\n", RAO);
+    printf(" [DEBUG] m0 espectral: %.8e\n", m0);
     printf(" [DEBUG] Pico-cresta  : %.3f m\n", peak_to_crest);
     printf("=================================================================\n");
 }
@@ -586,4 +768,3 @@ void app_main(void)
         }
     }
 }
-
