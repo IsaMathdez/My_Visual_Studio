@@ -1,8 +1,9 @@
 
-// Version 3.6b SENSOR DE OLEAJE
+// Version 3.53.1 SENSOR DE OLEAJE
 //
-// Base kept from version 3.6 (stable capture, memory layout, timing guards)
-// with the new frequency-domain wave-elevation estimation merged in.
+// Base kept from version 3.3 (stable capture, memory layout, timing guards)
+// NEW: Debugging a_z_dyn_mss
+// NEW: Vector for gravity debugging
 //
 // What this file does:
 // - Reads MPU6050 at 10 Hz over I2C (SDA=21, SCL=22)
@@ -82,6 +83,8 @@
 #define GYRO_LSB_PER_DPS 131.0f
 #define G0 9.80665f
 
+#define GRAVITY_ALPHA 0.995f
+
 static const float ALPHA_CF = 0.98f; // Complementary filter weight, changed from 0.98 to 0.995 for better low-frequency response
 
 // Buffers globales para evitar Stack Overflow
@@ -102,19 +105,17 @@ static float debug_freq[256];
 static float debug_peta[256];
 static int debug_bins = 0;
 
-// -------------------- Hydrodynamic model (RAO) --------------------
+// -------------------- Debug aceleracion vertical --------------------
+static float az_min = 1000.0f;
+static float az_max = -1000.0f;
+static double az_sum = 0.0;
+static double az_sum2 = 0.0;
+static int az_count = 0;
 
-// Natural frequency of the buoy (Hz)
-static const float BUOY_FN = 0.28f;
-
-// Damping ratio
-static const float BUOY_ZETA = 0.65f;
-
-// Scale factor after hydrodynamic compensation
-//static const float HS_SCALE = 1.00f;
-
-// Weight between spectral estimator and temporal estimator
-//static const float HS_BLEND = 0.75f;
+// Gravity estimator (Earth frame)
+static float grav_x = 0.0f;
+static float grav_y = 0.0f;
+static float grav_z = G0;
 
 // -------------------- Small structs --------------------
 typedef struct
@@ -309,93 +310,51 @@ static float stddev(const float *x, int n)
     return (float)sqrt(v);
 }
 
-// ------------------------------------------------------------
-// Response Amplitude Operator (RAO)
-// Simplified second-order hydrodynamic response of the buoy.
-//
-// Returns the response magnitude |H(f)|.
-//
-// f : wave frequency (Hz)
-// ------------------------------------------------------------
-static float compute_buoy_rao(float f)
+static void update_gravity_estimate(
+    float ax,
+    float ay,
+    float az)
 {
-    float wn = 2.0f * (float)M_PI * BUOY_FN;
-    float w = 2.0f * (float)M_PI * f;
+    grav_x =
+        GRAVITY_ALPHA * grav_x +
+        (1.0f - GRAVITY_ALPHA) * ax;
 
-    float a = wn * wn - w * w;
-    float b = 2.0f * BUOY_ZETA * wn * w;
+    grav_y =
+        GRAVITY_ALPHA * grav_y +
+        (1.0f - GRAVITY_ALPHA) * ay;
 
-    float H = (wn * wn) / sqrtf(a * a + b * b);
-
-    // Prevent divisions by very small values
-    if (H < 0.20f)
-        H = 0.20f;
-
-    return H;
+    grav_z =
+        GRAVITY_ALPHA * grav_z +
+        (1.0f - GRAVITY_ALPHA) * az;
 }
 
-// ------------------------------------------------------------
-// Time-domain estimator of significant wave height.
-//
-// Estimates Hs directly from the RMS vertical acceleration.
-// This estimator is later fused with the spectral estimator.
-//
-// acc_mss : vertical acceleration (m/s²)
-// n       : number of samples
-// ------------------------------------------------------------
-//===============================================================
-// Estimador de Hs basado en aceleración RMS + frecuencia dominante
-//===============================================================
-static float estimate_hs_from_rms(float acc_rms, float fp)
+static float vertical_dynamic_acceleration(
+    float ax,
+    float ay,
+    float az)
 {
-    if (fp < 0.05f)
+    float gx = grav_x;
+    float gy = grav_y;
+    float gz = grav_z;
+
+    float gnorm = sqrtf(
+        gx * gx +
+        gy * gy +
+        gz * gz);
+
+    if (gnorm < 1e-6f)
         return 0.0f;
 
-    // Frecuencia angular
-    float omega = 2.0f * (float)M_PI * fp;
+    gx /= gnorm;
+    gy /= gnorm;
+    gz /= gnorm;
 
-    // RAO de la boya
-    float rao = compute_buoy_rao(fp);
+    float aproj =
+        ax * gx +
+        ay * gy +
+        az * gz;
 
-    // Desplazamiento RMS de la boya
-    float eta_rms = acc_rms / (omega * omega);
-
-    // Corregir por la respuesta dinámica
-    eta_rms /= rao;
-
-    // Convertir RMS a altura significativa
-    float hs = 4.0f * eta_rms;
-
-    // Evitar valores negativos
-    if (hs < 0.0f)
-        hs = 0.0f;
-
-    return hs;
-}
-
-static float compute_wave_band_rms(void)
-{
-    float energy = 0.0f;
-
-    const float HS_MIN_HZ = 0.05f;
-    const float HS_MAX_HZ = 1.00f;
-
-    for(int i=0;i<debug_bins;i++)
-    {
-        float f = debug_freq[i];
-
-        if(f < HS_MIN_HZ)
-            continue;
-
-        if(f > HS_MAX_HZ)
-            continue;
-
-        energy += debug_peta[i];
-    }
-
-    energy *= (SAMPLE_RATE_HZ / BURST_SAMPLES);
-
-    return sqrtf(fmaxf(energy,0.0f));
+    return aproj - G0;
 }
 
 // -------------------- DFT / spectral moments --------------------
@@ -551,6 +510,8 @@ static void process_burst(const float *acc_mss, const float *roll_rad, const flo
 
     printf("m0 = %.8e\n", m0);
 
+    float Hs_spec = 4.0f * sqrtf(fmaxf(m0, 0.0f));
+    float sigma_eta = sqrtf(fmaxf(m0, 0.0f));
     float Tp = (fp > 1e-6f) ? (1.0f / fp) : 0.0f;
     float Tm01 = (m1 > 1e-9f) ? (m0 / m1) : 0.0f;
     float Tm02 = (m2 > 1e-9f) ? sqrtf(m0 / m2) : 0.0f;
@@ -579,7 +540,8 @@ static void process_burst(const float *acc_mss, const float *roll_rad, const flo
     }
     float peak_to_crest = eta_max - eta_min;
 
-    // Seleccionamos las variables mas representativas      
+    // Seleccionamos las variables mas representativas
+    float Hs = Hs_spec;        // Altura significativa
     float periodo_marino = Tp; // Periodo medio de cruce por cero espectral
     float direccion_ola_deg = dir_deg;
 
@@ -591,29 +553,6 @@ static void process_burst(const float *acc_mss, const float *roll_rad, const flo
     }
 
     acc_rms = sqrtf(acc_rms / n);
-
-    float Hs_rao = estimate_hs_from_rms(acc_rms, fp);
-
-    float eta_rms_band = compute_wave_band_rms();
-
-    //------------------------------------------------------
-    // Nuevo estimador físico de Hs (Versión 3.6)
-    //------------------------------------------------------
-
-    // float Hs = estimate_hs_from_rms(acc_rms, fp);
-    float RAO = compute_buoy_rao(fp);
-
-    float Hs = Hs_rao;
-
-    // Nivel mínimo de movimiento para considerar que existe oleaje
-    const float ACC_RMS_THRESHOLD = 0.15f;
-
-    if (acc_rms < ACC_RMS_THRESHOLD)
-    {
-        Hs = 0.0f;
-        Tp = 0.0f;
-        fp = 0.0f;
-    }
 
     // --- REPORTE OCEANOGRAFICO AVANZADO ---
     printf("\n=================================================================\n");
@@ -641,15 +580,13 @@ static void process_burst(const float *acc_mss, const float *roll_rad, const flo
     printf("=================================================================\n");
 
     // Datos tecnicos opcionales para depuracion
-    printf(" [DEBUG] Hs RAO       : %.3f m\n", Hs_rao);
+    printf(" [DEBUG] Hs espectral : %.3f m\n", Hs_spec);
     printf(" [DEBUG] Tm01         : %.3f s\n", Tm01);
     printf(" [DEBUG] Tp           : %.3f s\n", Tp);
     printf(" [DEBUG] f_pico       : %.3f Hz\n", fp);
     printf(" [DEBUG] Periodo Pico: %.2f s\n", (fp > 0.001f) ? (1.0f / fp) : 0.0f);
     printf(" [DEBUG] Acc RMS     : %.4f m/s²\n", acc_rms);
-    printf(" [DEBUG] Eta RMS banda : %.4f m\n", eta_rms_band);
-    printf(" [DEBUG] RAO           : %.3f\n", RAO);
-    printf(" [DEBUG] m0 espectral: %.8e\n", m0);
+    printf(" [DEBUG] sigma(eta)   : %.4f m\n", sigma_eta);
     printf(" [DEBUG] Pico-cresta  : %.3f m\n", peak_to_crest);
     printf("=================================================================\n");
 }
@@ -723,11 +660,32 @@ void app_main(void)
             pitch = ALPHA_CF * (pitch + s.gy_rads * DT) + (1.0f - ALPHA_CF) * pitch_acc;
         }
 
-        // Rotate accelerometer vector to earth frame (z-up convention)
-        float az_earth_g = -s.ax_g * sinf(pitch) + s.ay_g * sinf(roll) * cosf(pitch) + s.az_g * cosf(roll) * cosf(pitch);
+        // New: Debugging vertical acceleration
+        float ax = s.ax_g * G0;
+        float ay = s.ay_g * G0;
+        float az = s.az_g * G0;
 
-        // Remove gravity (1 g) -> dynamic vertical acceleration
-        float a_z_dyn_mss = (az_earth_g - 1.0f) * G0;
+        update_gravity_estimate(
+            ax,
+            ay,
+            az);
+
+        float a_z_dyn_mss =
+            vertical_dynamic_acceleration(
+                ax,
+                ay,
+                az);
+
+        // Estadísticas de la aceleración vertical
+        if (a_z_dyn_mss < az_min)
+            az_min = a_z_dyn_mss;
+
+        if (a_z_dyn_mss > az_max)
+            az_max = a_z_dyn_mss;
+
+        az_sum += a_z_dyn_mss;
+        az_sum2 += a_z_dyn_mss * a_z_dyn_mss;
+        az_count++;
 
         // Store history for burst processing
         if (idx < BURST_SAMPLES)
@@ -741,6 +699,19 @@ void app_main(void)
         // When burst is full, process it
         if (idx >= BURST_SAMPLES)
         {
+            float az_mean = az_sum / az_count;
+
+            float az_std = sqrtf((az_sum2 / az_count) - (az_mean * az_mean));
+
+            printf("\n");
+            printf("=========== ANALISIS a_z_dyn_mss ===========\n");
+            printf("Min      : %.4f m/s²\n", az_min);
+            printf("Max      : %.4f m/s²\n", az_max);
+            printf("Media    : %.4f m/s²\n", az_mean);
+            printf("Std Dev  : %.4f m/s²\n", az_std);
+            printf("Muestras : %d\n", az_count);
+            printf("===========================================\n");
+
             printf("\nProcediendo a procesar la rafaga...\n");
 
             process_burst(heave, roll_hist, pitch_hist, BURST_SAMPLES);
@@ -756,6 +727,13 @@ void app_main(void)
                 WAIT_BETWEEN_BURSTS_SEC * 1000));
 
             // Reset for the next burst
+
+            az_min = 1000.0f;
+            az_max = -1000.0f;
+            az_sum = 0.0;
+            az_sum2 = 0.0;
+            az_count = 0;
+
             idx = 0;
             memset(heave, 0, sizeof(heave));
             memset(roll_hist, 0, sizeof(roll_hist));
