@@ -25,6 +25,17 @@ void app_main(void)
         NULL
     );
 
+    ds18b20_init();
+
+    xTaskCreate(
+        ds18b20_task,
+        "DS18B20",
+        4096,
+        NULL,
+        5,
+        NULL
+    );
+
     while (1)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
