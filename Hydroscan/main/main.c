@@ -5,7 +5,8 @@
 #include "freertos/task.h"
 
 #include "buoy_data.h"
-#include "tds.h"
+#include "tds_sensor.h"
+#include "ds18b20_sensor.h"
 
 buoy_data_t buoy_data;
 

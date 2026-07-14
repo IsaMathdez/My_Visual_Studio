@@ -23,7 +23,7 @@
 
 #include "board.h"
 #include "buoy_data.h"
-#include "tds.h"
+#include "tds_sensor.h"
 
 /*==============================================================
                         CONFIGURACIÓN
