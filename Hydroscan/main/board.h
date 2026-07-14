@@ -1,0 +1,36 @@
+
+#ifndef BOARD_H
+#define BOARD_H
+
+/*
+ * ============================================================
+ *                HYDROSCAN - CONFIGURACIÓN DE HARDWARE
+ * ============================================================
+ *
+ * Cambiar únicamente este archivo cuando se migre
+ * del ESP32 DevKit al LILYGO T-SIM7670G-S3.
+ *
+ */
+
+/**********************
+ * GPIO DS18B20
+ **********************/
+#define PIN_DS18B20           4
+
+/**********************
+ * GPIO Sensor TDS
+ **********************/
+#define PIN_TDS_ADC           36
+
+/**********************
+ * LED de estado
+ **********************/
+#define PIN_STATUS_LED        2
+
+/**********************
+ * MPU6050 (I2C)
+ **********************/
+#define PIN_I2C_SDA           21
+#define PIN_I2C_SCL           22
+
+#endif
