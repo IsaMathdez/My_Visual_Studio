@@ -1,3 +1,5 @@
+// Hydroscan main application file
+// Made by Isaias Matos
 
 #include <stdio.h>
 
@@ -7,6 +9,7 @@
 #include "buoy_data.h"
 #include "tds_sensor.h"
 #include "ds18b20_sensor.h"
+#include "telemetry.h"
 
 buoy_data_t buoy_data;
 
@@ -30,6 +33,17 @@ void app_main(void)
     xTaskCreate(
         ds18b20_task,
         "DS18B20",
+        4096,
+        NULL,
+        5,
+        NULL
+    );
+
+    telemetry_init();
+
+    xTaskCreate(
+        telemetry_task,
+        "TELEMETRY",
         4096,
         NULL,
         5,

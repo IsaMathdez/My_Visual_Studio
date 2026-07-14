@@ -101,7 +101,7 @@
                     DEBUG
 ==============================================================*/
 
-#define TDS_DEBUG_PRINT 1
+#define TDS_DEBUG_PRINT 0
 
 /*==============================================================
                     VARIABLES PRIVADAS
@@ -129,7 +129,7 @@ static float adc_to_voltage(float adc_counts)
  * utilizando la curva de calibración experimental.
  */
 
-static float voltage_to_calibrated_salinity(float voltage)
+static float voltage_to_calibrated_tds(float voltage)
 {
     if (voltage < TDS_MIN_VALID_VOLTAGE)
         return 0.0f;
@@ -210,7 +210,7 @@ void tds_task(void *pvParameters)
 {
     float adc_average;
     float voltage;
-    float salinity;
+    float tds;
 
 #if TDS_USE_TEMP_COMPENSATION
 
@@ -256,24 +256,24 @@ void tds_task(void *pvParameters)
             Calcular Salinidad
         ----------------------------------------------*/
 
-        salinity = voltage_to_calibrated_salinity(voltage);
+        tds = voltage_to_calibrated_tds(voltage);
 
-        if (salinity < 0.0f)
-            salinity = 0.0f;
+        if (tds < 0.0f)
+            tds = 0.0f;
 
         /*----------------------------------------------
             Actualizar estructura global
         ----------------------------------------------*/
 
-        /* El valor TDS queda reservado para futuras versiones */
+        /* El valor Salinidad queda reservado para futuras versiones */
 
-        buoy_data.tds.valid = false;
+        buoy_data.salinity.valid = false;
 
-        /* Salinidad estimada mediante la calibración */
+        /* TDS estimada mediante la calibración */
 
-        buoy_data.salinity.value = salinity;
-        buoy_data.salinity.valid = true;
-        buoy_data.salinity.last_update_ms =
+        buoy_data.tds.value = tds;
+        buoy_data.tds.valid = true;
+        buoy_data.tds.last_update_ms =
             xTaskGetTickCount();
 
 #if TDS_DEBUG_PRINT
