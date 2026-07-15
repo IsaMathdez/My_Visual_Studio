@@ -4,6 +4,11 @@ idf_component_register(
         "tds.c"
         "ds18b20.c"
         "telemetry.c"
+        "mpu6050_sensor.c"
+        "attitude.c"
+        "wave_processing.c"
+        "spectrum.c"
+        "wave_task.c"
 
     INCLUDE_DIRS "."
 )
