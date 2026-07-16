@@ -21,6 +21,14 @@
 
 static const char *TAG = "WAVE_PROC";
 
+#define WAVE_PROCESSING_DEBUG            1
+
+#if WAVE_PROCESSING_DEBUG
+#define WAVE_PRINTF(...)   printf(__VA_ARGS__)
+#else
+#define WAVE_PRINTF(...)
+#endif
+
 /*==============================================================
                 FUNCIONES PRIVADAS
 ==============================================================*/
@@ -146,10 +154,12 @@ void wave_processing_reset_statistics(void)
 
 void wave_processing_print_statistics(void)
 {
+
+#if WAVE_PROCESSING_DEBUG
+
     if(sample_count == 0)
     {
-        ESP_LOGW(TAG,
-                 "No existen muestras.");
+        WAVE_PRINTF("No existen muestras.");
 
         return;
     }
@@ -183,4 +193,7 @@ void wave_processing_print_statistics(void)
             (unsigned long)sample_count);
 
     printf("===========================================\n");
+
+#endif
+
 }

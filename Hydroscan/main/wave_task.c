@@ -84,9 +84,9 @@ static uint32_t az_count;
                     VARIABLES INTERNAS
 =============================================================*/
 
-static attitude_state_t attitude;
+static attitude_data_t attitude;
 
-static wave_spectrum_result_t spectrum_result;
+static spectrum_result_t spectrum_result;
 
 static int sample_index = 0;
 
@@ -155,7 +155,7 @@ void wave_task_start(void)
                 INICIALIZACION DEL MODULO
 =============================================================*/
 
-static void wave_initialize(void)
+void wave_initialize(void)
 {
     ESP_LOGI(TAG,"======================================");
     ESP_LOGI(TAG," Inicializando modulo de oleaje...");
@@ -164,8 +164,7 @@ static void wave_initialize(void)
     ESP_ERROR_CHECK(
         mpu6050_sensor_init());
 
-    attitude_init(
-        &attitude);
+    attitude_init();
 
     reset_buffers();
 
@@ -201,7 +200,7 @@ void wave_task(void *pvParameters)
 
     TickType_t lastWakeTime = xTaskGetTickCount();
 
-    mpu6050_sample_t sample;
+    mpu6050_data_t sample;
 
     while (1)
     {
@@ -219,7 +218,7 @@ void wave_task(void *pvParameters)
                     Leer MPU6050
         ------------------------------------------------------*/
 
-        if (mpu6050_read_sample(&sample) != ESP_OK)
+        if (mpu6050_read(&sample) != ESP_OK)
         {
 #if WAVE_TASK_DEBUG
             ESP_LOGW(TAG,
@@ -235,8 +234,7 @@ void wave_task(void *pvParameters)
         ------------------------------------------------------*/
 
         attitude_update(
-            &attitude,
-            &sample);
+            &sample, &attitude);
 
 
 
@@ -246,8 +244,7 @@ void wave_task(void *pvParameters)
 
         float az_dynamic =
             wave_compute_vertical_acceleration(
-                &attitude,
-                &sample);
+                &sample, &attitude);
 
 
 
@@ -390,10 +387,10 @@ void wave_task(void *pvParameters)
                     Actualizar buoy_data
         ------------------------------------------------------*/
 
-        g_buoy_data.wave_height_m =
+        buoy_data.wave_height.value =
             spectrum_result.Hs;
 
-        g_buoy_data.wave_period_s =
+        buoy_data.wave_period.value =
             spectrum_result.Tp;
 
 

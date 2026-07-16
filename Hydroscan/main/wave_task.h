@@ -46,6 +46,8 @@ extern "C" {
                     FUNCIONES PUBLICAS
 =============================================================*/
 
+void wave_initialize(void);
+
 void wave_task(void *pvParameters);
 
 #ifdef __cplusplus

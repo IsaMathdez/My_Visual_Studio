@@ -1,4 +1,4 @@
-// Hydroscan main application file
+// Hydroscan main application file v4.0
 // Made by Isaias Matos
 
 #include <stdio.h>
@@ -10,12 +10,39 @@
 #include "tds_sensor.h"
 #include "ds18b20_sensor.h"
 #include "telemetry.h"
+#include "wave_task.h"
+// ACTUALIZADO
 
 buoy_data_t buoy_data;
 
 void app_main(void)
 {
-    printf("Hydroscan iniciado\n");
+    printf("\n");
+    printf("=============================================\n");
+    printf("        HYDROSCAN - BOYA OCEANOGRAFICA\n");
+    printf("=============================================\n");
+
+    printf("Sistema inicializado.\n");
+
+
+    /*----------------------------------------------------------
+                    Sensor DS18B20
+    ----------------------------------------------------------*/
+
+    ds18b20_init();
+
+    xTaskCreate(
+        ds18b20_task,
+        "Temperature",
+        4096,
+        NULL,
+        4,
+        NULL);
+
+
+    /*----------------------------------------------------------
+                    Sensor TDS
+    ----------------------------------------------------------*/
 
     tds_init();
 
@@ -24,34 +51,44 @@ void app_main(void)
         "TDS",
         4096,
         NULL,
-        5,
-        NULL
-    );
+        4,
+        NULL);
 
-    ds18b20_init();
+
+    /*----------------------------------------------------------
+                    Sensor de Oleaje
+    ----------------------------------------------------------*/
+
+    //wave_initialize();
 
     xTaskCreate(
-        ds18b20_task,
-        "DS18B20",
-        4096,
+        wave_task,
+        "Wave",
+        8192,
         NULL,
         5,
-        NULL
-    );
+        NULL);
+
+
+    /*----------------------------------------------------------
+                    Telemetría
+    ----------------------------------------------------------*/
 
     telemetry_init();
 
     xTaskCreate(
         telemetry_task,
-        "TELEMETRY",
+        "Telemetry",
         4096,
         NULL,
-        5,
-        NULL
-    );
+        2,
+        NULL);
+
+
+    printf("Todas las tareas fueron creadas correctamente.\n");
 
     while (1)
     {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(portMAX_DELAY);
     }
 }

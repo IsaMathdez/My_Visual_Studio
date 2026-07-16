@@ -17,6 +17,8 @@
 #include "esp_log.h"
 #include "esp_err.h"
 
+#include "board.h"
+
 /*==============================================================
                         CONFIGURACIÓN
 ==============================================================*/
@@ -65,7 +67,7 @@ static esp_err_t i2c_write_byte(uint8_t reg, uint8_t data)
     i2c_master_stop(cmd);
 
     esp_err_t ret =
-        i2c_master_cmd_begin(MPU6050_I2C_PORT,
+        i2c_master_cmd_begin(I2C_PORT,
                              cmd,
                              pdMS_TO_TICKS(1000));
 
@@ -111,13 +113,68 @@ static esp_err_t i2c_read_bytes(uint8_t reg,
     i2c_master_stop(cmd);
 
     esp_err_t ret =
-        i2c_master_cmd_begin(MPU6050_I2C_PORT,
+        i2c_master_cmd_begin(I2C_PORT,
                              cmd,
                              pdMS_TO_TICKS(1000));
 
     i2c_cmd_link_delete(cmd);
 
     return ret;
+}
+
+/*------------------------------------------------------------
+                Inicialización del bus I2C
+------------------------------------------------------------*/
+
+static esp_err_t i2c_bus_init(void)
+{
+    ESP_LOGI(TAG,
+             "Inicializando bus I2C...");
+
+    i2c_config_t config =
+    {
+        .mode = I2C_MODE_MASTER,
+
+        .sda_io_num = PIN_I2C_SDA,
+
+        .scl_io_num = PIN_I2C_SCL,
+
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+
+        .master.clk_speed = I2C_FREQ_HZ,
+
+        .clk_flags = 0
+    };
+
+    ESP_ERROR_CHECK(
+        i2c_param_config(
+            I2C_PORT,
+            &config));
+
+    esp_err_t ret =
+        i2c_driver_install(
+            I2C_PORT,
+            config.mode,
+            0,
+            0,
+            0);
+
+    if(ret == ESP_ERR_INVALID_STATE)
+    {
+        ESP_LOGW(TAG,
+                 "Driver I2C ya estaba instalado.");
+
+        return ESP_OK;
+    }
+
+    ESP_ERROR_CHECK(ret);
+
+    ESP_LOGI(TAG,
+             "Bus I2C inicializado correctamente.");
+
+    return ESP_OK;
 }
 
 /*==============================================================
@@ -127,6 +184,9 @@ static esp_err_t i2c_read_bytes(uint8_t reg,
 esp_err_t mpu6050_sensor_init(void)
 {
     esp_err_t ret;
+
+        ESP_ERROR_CHECK(
+        i2c_bus_init());
 
     ret = i2c_write_byte(MPU_PWR_MGMT_1, 0x00);
     ESP_ERROR_CHECK(ret);

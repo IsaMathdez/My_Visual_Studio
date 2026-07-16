@@ -22,7 +22,15 @@
                         CONFIGURACIÓN
 ==============================================================*/
 
-#define TELEMETRY_PERIOD_MS     3000
+#define TELEMETRY_PERIOD_MS     20000 // 20 segundos
+
+#define TELEMETRY_DEBUG            1
+
+#if TELEMETRY_DEBUG
+#define TELEMETRY_PRINTF(...)   printf(__VA_ARGS__)
+#else
+#define TELEMETRY_PRINTF(...)
+#endif
 
 /*==============================================================
                         VARIABLES
@@ -54,6 +62,9 @@ void telemetry_init(void)
 
 void telemetry_task(void *pvParameters)
 {
+
+#if TELEMETRY_DEBUG
+
     while (1)
     {
         /*------------------------------------------------------
@@ -156,4 +167,7 @@ void telemetry_task(void *pvParameters)
 
         vTaskDelay(pdMS_TO_TICKS(TELEMETRY_PERIOD_MS));
     }
+
+#endif
+
 }
