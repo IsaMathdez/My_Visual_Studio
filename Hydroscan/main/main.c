@@ -1,5 +1,12 @@
-// Hydroscan main application file v4.0
+// Hydroscan main application file v4.0.1
 // Made by Isaias Matos
+
+// CAMBIOS v4.0.1
+// Se agrego calibracion del acelerometro en el modulo de oleaje. 
+// Nueva funcion mpu6050_calibrate_acc
+
+// A MEJORAR EN V4.0.2
+// Estimacion de altura Hs 
 
 #include <stdio.h>
 

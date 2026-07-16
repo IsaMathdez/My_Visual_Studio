@@ -143,6 +143,12 @@ void wave_initialize(void)
 
     ESP_ERROR_CHECK(
         mpu6050_sensor_init());
+    
+    ESP_ERROR_CHECK(
+        mpu6050_calibrate_gyro());
+
+    ESP_ERROR_CHECK(
+        mpu6050_calibrate_acc());
 
     attitude_init();
 

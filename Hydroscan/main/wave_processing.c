@@ -70,6 +70,13 @@ static float body_to_earth_vertical(
         + (cp * sr)  * imu->ay
         + (cp * cr)  * imu->az;
 
+/*
+    printf("\n");
+    printf("ax = %.3f\n", imu->ax);
+    printf("ay = %.3f\n", imu->ay);
+    printf("az = %.3f\n", imu->az);
+    printf("az_earth = %.3f\n", az_earth);
+*/
     return az_earth;
 }
 

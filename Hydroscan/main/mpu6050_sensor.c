@@ -46,6 +46,10 @@ static float gx_bias = 0.0f;
 static float gy_bias = 0.0f;
 static float gz_bias = 0.0f;
 
+static float ax_offset = 0.0f;
+static float ay_offset = 0.0f;
+static float az_offset = 0.0f;
+
 /*==============================================================
                     FUNCIONES PRIVADAS
 ==============================================================*/
@@ -230,6 +234,10 @@ esp_err_t mpu6050_calibrate_gyro(void)
     double sy = 0.0;
     double sz = 0.0;
 
+    double sax = 0.0;
+    double say = 0.0;
+    double saz = 0.0;
+
     mpu6050_raw_data_t raw;
 
     ESP_LOGI(TAG,
@@ -242,6 +250,10 @@ esp_err_t mpu6050_calibrate_gyro(void)
             sx += raw.gx;
             sy += raw.gy;
             sz += raw.gz;
+
+            sax += raw.ax;
+            say += raw.ay;
+            saz += raw.az;
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -264,6 +276,86 @@ esp_err_t mpu6050_calibrate_gyro(void)
              gx_bias,
              gy_bias,
              gz_bias);
+    
+    ESP_LOGI(TAG,
+         "Accel RAW promedio:");
+
+    ESP_LOGI(TAG,
+         "AX = %.1f",
+         sax / samples);
+
+    ESP_LOGI(TAG,
+         "AY = %.1f",
+         say / samples);
+
+    ESP_LOGI(TAG,
+         "AZ = %.1f",
+         saz / samples);
+
+    return ESP_OK;
+}
+
+/*==============================================================
+                CALIBRACIÓN DEL ACELERÓMETRO
+==============================================================*/
+
+esp_err_t mpu6050_calibrate_acc(void)
+{
+    const int samples = 300;
+
+    double sx = 0.0;
+    double sy = 0.0;
+    double sz = 0.0;
+
+    mpu6050_raw_data_t raw;
+
+    ESP_LOGI(TAG,
+             "Calibrando acelerometro. Mantenga el sensor inmovil...");
+
+    for(int i = 0; i < samples; i++)
+    {
+        if(mpu6050_read_raw(&raw) == ESP_OK)
+        {
+            sx += raw.ax;
+            sy += raw.ay;
+            sz += raw.az;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    float ax_mean = sx / samples;
+    float ay_mean = sy / samples;
+    float az_mean = sz / samples;
+
+    /*
+     * En reposo esperamos:
+     *
+     * ax = 0
+     * ay = 0
+     * az = +1 g
+     */
+
+    ax_offset = ax_mean;
+
+    ay_offset = ay_mean;
+
+    az_offset = az_mean - ACC_LSB_PER_G;
+
+    ESP_LOGI(TAG,
+             "Offsets acelerometro:");
+
+    ESP_LOGI(TAG,
+             "AX = %.2f",
+             ax_offset);
+
+    ESP_LOGI(TAG,
+             "AY = %.2f",
+             ay_offset);
+
+    ESP_LOGI(TAG,
+             "AZ = %.2f",
+             az_offset);
 
     return ESP_OK;
 }
@@ -323,13 +415,13 @@ esp_err_t mpu6050_read(mpu6050_data_t *imu)
         return ret;
 
     imu->ax =
-        ((float)raw.ax/ACC_LSB_PER_G)*G0;
+        (((float)raw.ax - ax_offset) / ACC_LSB_PER_G) * G0;
 
     imu->ay =
-        ((float)raw.ay/ACC_LSB_PER_G)*G0;
+        (((float)raw.ay - ay_offset) / ACC_LSB_PER_G) * G0;
 
     imu->az =
-        ((float)raw.az/ACC_LSB_PER_G)*G0;
+        (((float)raw.az - az_offset) / ACC_LSB_PER_G) * G0;
 
     imu->gx =
         (((float)raw.gx/GYRO_LSB_PER_DPS)*

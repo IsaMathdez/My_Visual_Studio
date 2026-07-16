@@ -92,6 +92,10 @@ esp_err_t mpu6050_sensor_init(void);
 
 esp_err_t mpu6050_calibrate_gyro(void);
 
+/* Calibra el bias del acelerómetro */
+
+esp_err_t mpu6050_calibrate_acc(void);
+
 /* Lectura cruda */
 
 esp_err_t mpu6050_read_raw(
