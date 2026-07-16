@@ -17,42 +17,34 @@
 #include "wave_processing.h"
 #include "spectrum.h"
 
-
-
 /*=============================================================
                         CONFIGURACION
 =============================================================*/
 
-#define SAMPLE_RATE_HZ             10.0f
-#define SAMPLE_PERIOD_MS           ((int)(1000.0f/SAMPLE_RATE_HZ))
+#define SAMPLE_RATE_HZ 10.0f
+#define SAMPLE_PERIOD_MS ((int)(1000.0f / SAMPLE_RATE_HZ))
 
-#define BURST_DURATION_SEC         60
-#define WAIT_BETWEEN_BURSTS_SEC    5
+#define BURST_DURATION_SEC 60
+#define WAIT_BETWEEN_BURSTS_SEC 10
 
-#define BURST_SAMPLES              ((int)(SAMPLE_RATE_HZ*BURST_DURATION_SEC))
+#define BURST_SAMPLES ((int)(SAMPLE_RATE_HZ * BURST_DURATION_SEC))
 
-#define WAVE_TASK_STACK_SIZE       8192
-#define WAVE_TASK_PRIORITY         5
-
-
+#define WAVE_TASK_STACK_SIZE 8192
+#define WAVE_TASK_PRIORITY 5
 
 /*=============================================================
                           DEBUG
 =============================================================*/
 
-#define WAVE_TASK_DEBUG            1
+#define WAVE_TASK_DEBUG 1
 
 #if WAVE_TASK_DEBUG
-#define WAVE_PRINTF(...)   printf(__VA_ARGS__)
+#define WAVE_PRINTF(...) printf(__VA_ARGS__)
 #else
 #define WAVE_PRINTF(...)
 #endif
 
-
-
 static const char *TAG = "WAVE_TASK";
-
-
 
 /*=============================================================
                         BUFFERS
@@ -63,8 +55,6 @@ static float vertical_acc[BURST_SAMPLES];
 static float roll_history[BURST_SAMPLES];
 
 static float pitch_history[BURST_SAMPLES];
-
-
 
 /*=============================================================
                     ESTADISTICAS DEBUG
@@ -78,8 +68,6 @@ static double az_sum2;
 
 static uint32_t az_count;
 
-
-
 /*=============================================================
                     VARIABLES INTERNAS
 =============================================================*/
@@ -89,8 +77,6 @@ static attitude_data_t attitude;
 static spectrum_result_t spectrum_result;
 
 static int sample_index = 0;
-
-
 
 /*=============================================================
                     RESET ESTADISTICAS
@@ -106,8 +92,6 @@ static void reset_statistics(void)
 
     az_count = 0;
 }
-
-
 
 /*=============================================================
                 RESET BUFFER DE ADQUISICION
@@ -132,8 +116,6 @@ static void reset_buffers(void)
     reset_statistics();
 }
 
-
-
 /*=============================================================
                 CREACION DE LA TAREA
 =============================================================*/
@@ -149,17 +131,15 @@ void wave_task_start(void)
         NULL);
 }
 
-
-
 /*=============================================================
                 INICIALIZACION DEL MODULO
 =============================================================*/
 
 void wave_initialize(void)
 {
-    ESP_LOGI(TAG,"======================================");
-    ESP_LOGI(TAG," Inicializando modulo de oleaje...");
-    ESP_LOGI(TAG,"======================================");
+    ESP_LOGI(TAG, "======================================");
+    ESP_LOGI(TAG, " Inicializando modulo de oleaje...");
+    ESP_LOGI(TAG, "======================================");
 
     ESP_ERROR_CHECK(
         mpu6050_sensor_init());
@@ -194,9 +174,18 @@ void wave_initialize(void)
 
 void wave_task(void *pvParameters)
 {
-    (void) pvParameters;
+    (void)pvParameters;
 
     wave_initialize();
+
+#if WAVE_TASK_DEBUG
+
+WAVE_PRINTF("\n");
+WAVE_PRINTF("====================================================\n");
+WAVE_PRINTF(" Primera rafaga iniciada...\n");
+WAVE_PRINTF("====================================================\n");
+
+#endif
 
     TickType_t lastWakeTime = xTaskGetTickCount();
 
@@ -212,8 +201,6 @@ void wave_task(void *pvParameters)
             &lastWakeTime,
             pdMS_TO_TICKS(SAMPLE_PERIOD_MS));
 
-
-
         /*------------------------------------------------------
                     Leer MPU6050
         ------------------------------------------------------*/
@@ -227,16 +214,12 @@ void wave_task(void *pvParameters)
             continue;
         }
 
-
-
         /*------------------------------------------------------
                 Actualizar actitud (Roll / Pitch)
         ------------------------------------------------------*/
 
         attitude_update(
             &sample, &attitude);
-
-
 
         /*------------------------------------------------------
                 Calcular aceleracion vertical
@@ -245,8 +228,6 @@ void wave_task(void *pvParameters)
         float az_dynamic =
             wave_compute_vertical_acceleration(
                 &sample, &attitude);
-
-
 
         /*------------------------------------------------------
                     Estadisticas Debug
@@ -264,8 +245,6 @@ void wave_task(void *pvParameters)
              (double)az_dynamic);
 
         az_count++;
-
-
 
         /*------------------------------------------------------
                     Guardar muestra
@@ -285,184 +264,161 @@ void wave_task(void *pvParameters)
             sample_index++;
         }
 
-
-
-#if WAVE_TASK_DEBUG
+/* #if WAVE_TASK_DEBUG
 
         static uint32_t counter = 0;
 
         counter++;
 
-        if(counter >= SAMPLE_RATE_HZ)
+        if (counter >= SAMPLE_RATE_HZ)
         {
             counter = 0;
 
             WAVE_PRINTF(
-            "\n------------ MPU6050 ------------\n");
+                "\n------------ MPU6050 ------------\n");
 
             WAVE_PRINTF(
-            "Muestras : %d / %d\n",
-            sample_index,
-            BURST_SAMPLES);
+                "Muestras : %d / %d\n",
+                sample_index,
+                BURST_SAMPLES);
 
             WAVE_PRINTF(
-            "Roll     : %.2f deg\n",
-            attitude.roll*180.0f/M_PI);
+                "Roll     : %.2f deg\n",
+                attitude.roll * 180.0f / M_PI);
 
             WAVE_PRINTF(
-            "Pitch    : %.2f deg\n",
-            attitude.pitch*180.0f/M_PI);
+                "Pitch    : %.2f deg\n",
+                attitude.pitch * 180.0f / M_PI);
 
             WAVE_PRINTF(
-            "Az dyn   : %.4f m/s²\n",
-            az_dynamic);
+                "Az dyn   : %.4f m/s²\n",
+                az_dynamic);
 
             WAVE_PRINTF(
-            "---------------------------------\n");
+                "---------------------------------\n");
         }
 
-#endif
-
-
+#endif */
 
         /*------------------------------------------------------
                 ¿Rafaga completa?
         ------------------------------------------------------*/
 
-        if(sample_index >= BURST_SAMPLES)
+        if (sample_index >= BURST_SAMPLES)
         {
-            break;
+
+            float az_mean =
+                (float)(az_sum / az_count);
+
+            float az_std =
+                sqrt(
+                    (az_sum2 / az_count) -
+                    (az_mean * az_mean));
+
+#if WAVE_TASK_DEBUG
+
+            WAVE_PRINTF("\n");
+            WAVE_PRINTF("=============================================\n");
+            WAVE_PRINTF("      ANALISIS ACELERACION VERTICAL\n");
+            WAVE_PRINTF("=============================================\n");
+            WAVE_PRINTF("Min      : %.4f m/s²\n", az_min);
+            WAVE_PRINTF("Max      : %.4f m/s²\n", az_max);
+            WAVE_PRINTF("Media    : %.4f m/s²\n", az_mean);
+            WAVE_PRINTF("Std Dev  : %.4f m/s²\n", az_std);
+            WAVE_PRINTF("Muestras : %lu\n",
+                        (unsigned long)az_count);
+            WAVE_PRINTF("=============================================\n");
+
+            WAVE_PRINTF(
+                "\nProcesando espectro de oleaje...\n");
+
+#endif
+
+            /*------------------------------------------------------
+                    Procesamiento espectral
+            ------------------------------------------------------*/
+
+            spectrum_process(
+                vertical_acc,
+                roll_history,
+                pitch_history,
+                BURST_SAMPLES,
+                SAMPLE_RATE_HZ,
+                &spectrum_result);
+
+            /*------------------------------------------------------
+                        Actualizar buoy_data
+            ------------------------------------------------------*/
+
+            buoy_data.wave_height.value =
+                spectrum_result.Hs;
+
+            buoy_data.wave_period.value =
+                spectrum_result.Tp;
+
+            /*------------------------------------------------------
+                        Reporte Oceanográfico
+            ------------------------------------------------------*/
+
+#if WAVE_TASK_DEBUG
+
+            WAVE_PRINTF("\n");
+            WAVE_PRINTF("====================================================\n");
+            WAVE_PRINTF("           REPORTE DE OLEAJE\n");
+            WAVE_PRINTF("====================================================\n");
+
+            WAVE_PRINTF(
+                "Altura significativa : %.3f m\n",
+                spectrum_result.Hs);
+
+            WAVE_PRINTF(
+                "Periodo pico         : %.3f s\n",
+                spectrum_result.Tp);
+
+            WAVE_PRINTF(
+                "Tm01                 : %.3f s\n",
+                spectrum_result.Tm01);
+
+            WAVE_PRINTF(
+                "Tm02                 : %.3f s\n",
+                spectrum_result.Tm02);
+
+            WAVE_PRINTF(
+                "Frecuencia pico      : %.3f Hz\n",
+                spectrum_result.fp);
+
+            WAVE_PRINTF(
+                "Direccion relativa   : %.1f deg\n",
+                spectrum_result.direction);
+
+            WAVE_PRINTF("====================================================\n");
+
+#endif
+
+            /*------------------------------------------------------
+                    Esperar próxima ráfaga
+            ------------------------------------------------------*/
+
+#if WAVE_TASK_DEBUG
+
+            WAVE_PRINTF(
+                "\nEsperando %d segundos...\n\n",
+                WAIT_BETWEEN_BURSTS_SEC);
+
+#endif
+
+            vTaskDelay(
+                pdMS_TO_TICKS(
+                    WAIT_BETWEEN_BURSTS_SEC * 1000));
+
+            /*------------------------------------------------------
+                        Reiniciar buffers
+            ------------------------------------------------------*/
+
+            reset_buffers();
+
+            lastWakeTime =
+                xTaskGetTickCount();
         }
-
-    //}
-
-
-        /*------------------------------------------------------
-                    Ráfaga completa
-        ------------------------------------------------------*/
-
-        float az_mean =
-            (float)(az_sum / az_count);
-
-        float az_std =
-            sqrt(
-                (az_sum2 / az_count) -
-                (az_mean * az_mean));
-
-#if WAVE_TASK_DEBUG
-
-        WAVE_PRINTF("\n");
-        WAVE_PRINTF("=============================================\n");
-        WAVE_PRINTF("      ANALISIS ACELERACION VERTICAL\n");
-        WAVE_PRINTF("=============================================\n");
-        WAVE_PRINTF("Min      : %.4f m/s²\n", az_min);
-        WAVE_PRINTF("Max      : %.4f m/s²\n", az_max);
-        WAVE_PRINTF("Media    : %.4f m/s²\n", az_mean);
-        WAVE_PRINTF("Std Dev  : %.4f m/s²\n", az_std);
-        WAVE_PRINTF("Muestras : %lu\n",
-                     (unsigned long)az_count);
-        WAVE_PRINTF("=============================================\n");
-
-        WAVE_PRINTF(
-            "\nProcesando espectro de oleaje...\n");
-
-#endif
-
-
-        /*------------------------------------------------------
-                Procesamiento espectral
-        ------------------------------------------------------*/
-
-        spectrum_process(
-            vertical_acc,
-            roll_history,
-            pitch_history,
-            BURST_SAMPLES,
-            SAMPLE_RATE_HZ,
-            &spectrum_result);
-
-
-
-        /*------------------------------------------------------
-                    Actualizar buoy_data
-        ------------------------------------------------------*/
-
-        buoy_data.wave_height.value =
-            spectrum_result.Hs;
-
-        buoy_data.wave_period.value =
-            spectrum_result.Tp;
-
-
-
-        /*------------------------------------------------------
-                    Reporte Oceanográfico
-        ------------------------------------------------------*/
-
-#if WAVE_TASK_DEBUG
-
-        WAVE_PRINTF("\n");
-        WAVE_PRINTF("====================================================\n");
-        WAVE_PRINTF("           REPORTE DE OLEAJE\n");
-        WAVE_PRINTF("====================================================\n");
-
-        WAVE_PRINTF(
-            "Altura significativa : %.3f m\n",
-            spectrum_result.Hs);
-
-        WAVE_PRINTF(
-            "Periodo pico         : %.3f s\n",
-            spectrum_result.Tp);
-
-        WAVE_PRINTF(
-            "Tm01                 : %.3f s\n",
-            spectrum_result.Tm01);
-
-        WAVE_PRINTF(
-            "Tm02                 : %.3f s\n",
-            spectrum_result.Tm02);
-
-        WAVE_PRINTF(
-            "Frecuencia pico      : %.3f Hz\n",
-            spectrum_result.fp);
-
-        WAVE_PRINTF(
-            "Direccion relativa   : %.1f deg\n",
-            spectrum_result.direction);
-
-        WAVE_PRINTF("====================================================\n");
-
-#endif
-
-
-
-        /*------------------------------------------------------
-                Esperar próxima ráfaga
-        ------------------------------------------------------*/
-
-#if WAVE_TASK_DEBUG
-
-        WAVE_PRINTF(
-            "\nEsperando %d segundos...\n\n",
-            WAIT_BETWEEN_BURSTS_SEC);
-
-#endif
-
-        vTaskDelay(
-            pdMS_TO_TICKS(
-                WAIT_BETWEEN_BURSTS_SEC * 1000));
-
-
-
-        /*------------------------------------------------------
-                    Reiniciar buffers
-        ------------------------------------------------------*/
-
-        reset_buffers();
-
-        lastWakeTime =
-            xTaskGetTickCount();
-
     }
-
 }

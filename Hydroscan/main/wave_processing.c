@@ -21,7 +21,7 @@
 
 static const char *TAG = "WAVE_PROC";
 
-#define WAVE_PROCESSING_DEBUG            1
+#define WAVE_PROCESSING_DEBUG            0
 
 #if WAVE_PROCESSING_DEBUG
 #define WAVE_PRINTF(...)   printf(__VA_ARGS__)
