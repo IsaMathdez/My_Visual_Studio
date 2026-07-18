@@ -22,7 +22,7 @@
                         CONFIGURACIÓN
 ==============================================================*/
 
-#define TELEMETRY_PERIOD_MS     60000 // 60 segundos
+#define TELEMETRY_PERIOD_MS     10000 // 10 segundos
 
 #define TELEMETRY_DEBUG            1
 

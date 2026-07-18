@@ -1,12 +1,14 @@
-// Hydroscan main application file v4.0.1
+// Hydroscan main application file v4.0.2
 // Made by Isaias Matos
 
-// CAMBIOS v4.0.1
-// Se agrego calibracion del acelerometro en el modulo de oleaje. 
-// Nueva funcion mpu6050_calibrate_acc
+// CAMBIOS v4.0.2
+// PSD corregida, Compensación Hann, Hs físicamente correcto
+// Modificado Spectrum.c
 
-// A MEJORAR EN V4.0.2
-// Estimacion de altura Hs 
+// A MEJORAR EN V4.0.3
+// Implementar Welch real
+// Arreglar Telemetry
+// Reajustar ecuacion del tds sensor
 
 #include <stdio.h>
 

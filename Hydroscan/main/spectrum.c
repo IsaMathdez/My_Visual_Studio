@@ -166,6 +166,30 @@ static void compute_wave_moments(
 
     const float df = fs / samples;
 
+    /*
+    * Corrección de energía de la ventana Hann.
+    *
+    * U = (1/N) * Σ w²(n)
+    *
+    * Para Hann ideal:
+    * U ≈ 0.375
+    */
+
+    double U = 0.0;
+
+    for(int n=0; n<samples; n++)
+    {
+        float w =
+            0.5f *
+            (1.0f -
+            cosf(2.0f * M_PI * n /
+                (samples - 1)));
+
+        U += w * w;
+    }
+
+    U /= samples;
+
     debug_bins = 0;
 
     *m0 = 0.0f;
@@ -203,9 +227,17 @@ static void compute_wave_moments(
         float Paa;
 
         if(k==0 || k==kmax)
-            Paa = mag2/(samples*samples);
+        {
+            Paa =
+                mag2 /
+                (samples * samples * U * df);
+        }
         else
-            Paa = 2.0f*mag2/(samples*samples);
+        {
+            Paa =
+                2.0f * mag2 /
+                (samples * samples * U * df);
+        }
 
         float f = k*df;
 
@@ -241,6 +273,14 @@ static void compute_wave_moments(
             *fp=f;
         }
     }
+#if SPECTRUM_DEBUG
+
+    SPECTRUM_PRINTF(
+        "Ventana Hann U = %.6f\n",
+        U);
+
+#endif
+
 }
 
 /*==============================================================
