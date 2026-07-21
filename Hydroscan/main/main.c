@@ -1,12 +1,11 @@
-// Hydroscan main application file v4.0.2
+// Hydroscan main application file v4.0.3
 // Made by Isaias Matos
 
-// CAMBIOS v4.0.2
-// PSD corregida, Compensación Hann, Hs físicamente correcto
-// Modificado Spectrum.c
+// CAMBIOS v4.0.3
+// Se implementa PSD de Welch real
+// Modificado Spectrum.c, agregado nuevo compute_wave_moments()
 
-// A MEJORAR EN V4.0.3
-// Implementar Welch real
+// A MEJORAR EN v4.0.4
 // Arreglar Telemetry
 // Reajustar ecuacion del tds sensor
 

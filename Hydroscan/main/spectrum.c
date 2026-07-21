@@ -32,10 +32,7 @@ static const char *TAG = "SPECTRUM";
 #define WAVE_MIN_HZ      0.12f
 #define WAVE_MAX_HZ      1.00f
 
-/*
- * Debug
- */
-
+// Debug 
 #define SPECTRUM_DEBUG   1
 
 #if SPECTRUM_DEBUG
@@ -150,6 +147,30 @@ static float standard_deviation( // No se ha usado
 }
 
 /*==============================================================
+            NUMERO DE SEGMENTOS WELCH
+==============================================================*/
+
+static int welch_segment_count(
+        int samples,
+        int segment_length,
+        int step)
+{
+    if(samples < segment_length)
+        return 0;
+
+    int count = 0;
+
+    for(int start = 0;
+        start + segment_length <= samples;
+        start += step)
+    {
+        count++;
+    }
+
+    return count;
+}
+
+/*==============================================================
             CÁLCULO DE MOMENTOS ESPECTRALES
 ==============================================================*/
 
@@ -162,126 +183,258 @@ static void compute_wave_moments(
         float *m2,
         float *fp)
 {
-    const int kmax = samples / 2;
+    /*----------------------------------------------------------
+                    PARAMETROS DE WELCH
+    ----------------------------------------------------------*/
 
-    const float df = fs / samples;
+    const int segment_length = 256;
 
-    /*
-    * Corrección de energía de la ventana Hann.
-    *
-    * U = (1/N) * Σ w²(n)
-    *
-    * Para Hann ideal:
-    * U ≈ 0.375
-    */
+    const int overlap = segment_length / 2;
 
-    double U = 0.0;
+    const int step =
+        segment_length - overlap;
 
-    for(int n=0; n<samples; n++)
-    {
-        float w =
-            0.5f *
-            (1.0f -
-            cosf(2.0f * M_PI * n /
-                (samples - 1)));
+    const int kmax =
+        segment_length / 2;
 
-        U += w * w;
-    }
+    const float df =
+        fs / segment_length;
 
-    U /= samples;
-
-    debug_bins = 0;
+    /*----------------------------------------------------------
+                    LIMPIAR RESULTADOS
+    ----------------------------------------------------------*/
 
     *m0 = 0.0f;
     *m1 = 0.0f;
     *m2 = 0.0f;
     *fp = 0.0f;
 
+    debug_bins = 0;
+
     float peak_power = -1.0f;
+
+    /*----------------------------------------------------------
+                NUMERO DE SEGMENTOS WELCH
+    ----------------------------------------------------------*/
+
+    int segments =
+        welch_segment_count(
+            samples,
+            segment_length,
+            step);
+
+    if(segments <= 0)
+        return;
+
+    /*----------------------------------------------------------
+                PSD PROMEDIO
+    ----------------------------------------------------------*/
+
+    float Paa_average[129];
+
+    memset(
+        Paa_average,
+        0,
+        sizeof(Paa_average));
+    
+    /*----------------------------------------------------------
+        RECORRER SEGMENTOS
+    ----------------------------------------------------------*/
+
+    for(int seg=0; seg<segments; seg++)
+    {
+        int start =
+            seg * step;
+
+        /*------------------------------------------
+            ENERGIA DE LA VENTANA
+        ------------------------------------------*/
+
+        double U = 0.0;
+
+        for(int n=0;n<segment_length;n++)
+        {
+            float w =
+                0.5f *
+                (1.0f -
+                cosf(
+                2.0f*M_PI*n/
+                (segment_length-1)));
+
+            U += w*w;
+        }
+
+        U /= segment_length;
+
+        /*------------------------------------------
+            DFT
+        ------------------------------------------*/
+
+        for(int k=0;k<=kmax;k++)
+        {
+            if((k%10)==0)
+                vTaskDelay(1);
+
+            double re = 0.0;
+            double im = 0.0;
+
+            for(int n=0;n<segment_length;n++)
+            {
+                float w =
+                    0.5f *
+                    (1.0f -
+                    cosf(
+                    2.0f*M_PI*n/
+                    (segment_length-1)));
+
+                float xn =
+                    acc[start+n] * w;
+
+                double ang =
+                    -2.0 *
+                    M_PI *
+                    k *
+                    n /
+                    segment_length;
+
+                re +=
+                    xn *
+                    cos(ang);
+
+                im +=
+                    xn *
+                    sin(ang);
+            }
+        
+            /*------------------------------------------
+                PSD DEL SEGMENTO
+            ------------------------------------------*/
+
+            double mag2 =
+                re*re + im*im;
+
+            float Paa;
+
+            if(k==0 || k==kmax)
+            {
+                Paa =
+                    mag2 /
+                    (segment_length *
+                     segment_length *
+                     U);
+            }
+            else
+            {
+                Paa =
+                    2.0f *
+                    mag2 /
+                    (segment_length *
+                     segment_length *
+                     U);
+            }
+
+            Paa_average[k] += Paa;
+
+        }   /* fin for(k) */
+
+    }   /* fin for(seg) */
+
+    /*----------------------------------------------------------
+        PROMEDIAR PSD
+    ----------------------------------------------------------*/
 
     for(int k=0;k<=kmax;k++)
     {
-        if((k%10)==0)
-            vTaskDelay(1);
+        Paa_average[k] /= segments;
+    }
 
-        double re = 0.0;
-        double im = 0.0;
+    /*----------------------------------------------------------
+            CALCULAR MOMENTOS ESPECTRALES
+    ----------------------------------------------------------*/
 
-        for(int n=0;n<samples;n++)
-        {
-            float w =
-                0.5f*(1.0f-cosf(2.0f*M_PI*n/(samples-1)));
+    for(int k=0;k<=kmax;k++)
+    {
+        float f = k * df;
 
-            float xn = acc[n]*w;
-
-            double ang =
-                -2.0*M_PI*k*n/samples;
-
-            re += xn*cos(ang);
-            im += xn*sin(ang);
-        }
-
-        double mag2 =
-            re*re+im*im;
-
-        float Paa;
-
-        if(k==0 || k==kmax)
-        {
-            Paa =
-                mag2 /
-                (samples * samples * U * df);
-        }
-        else
-        {
-            Paa =
-                2.0f * mag2 /
-                (samples * samples * U * df);
-        }
-
-        float f = k*df;
-
-        if(f<WAVE_MIN_HZ)
+        if(f < WAVE_MIN_HZ)
             continue;
 
-        if(f>WAVE_MAX_HZ)
+        if(f > WAVE_MAX_HZ)
             continue;
+
+        /*------------------------------------------
+            PSD aceleración -> PSD elevación
+        ------------------------------------------*/
 
         float omega =
-            2.0f*M_PI*f;
+            2.0f * M_PI * f;
 
         float omega2 =
-            omega*omega;
+            omega * omega;
 
         float Peta =
-            Paa/(omega2*omega2);
+            Paa_average[k] /
+            (omega2 * omega2 * df);
 
-        if(debug_bins<256)
+        /*------------------------------------------
+                    DEBUG
+        ------------------------------------------*/
+
+        if(debug_bins < 256)
         {
-            debug_freq[debug_bins]=f;
-            debug_peta[debug_bins]=Peta;
+            debug_freq[debug_bins] = f;
+            debug_peta[debug_bins] = Peta;
             debug_bins++;
         }
 
-        *m0 += Peta*df;
-        *m1 += f*Peta*df;
-        *m2 += f*f*Peta*df;
+        /*------------------------------------------
+                MOMENTOS ESPECTRALES
+        ------------------------------------------*/
 
-        if(Peta>peak_power)
+        *m0 += Peta * df;
+        *m1 += f * Peta * df;
+        *m2 += f * f * Peta * df;
+
+        /*------------------------------------------
+                FRECUENCIA DE PICO
+        ------------------------------------------*/
+
+        if(Peta > peak_power)
         {
-            peak_power=Peta;
-            *fp=f;
+            peak_power = Peta;
+            *fp = f;
         }
     }
+
 #if SPECTRUM_DEBUG
 
-    SPECTRUM_PRINTF(
-        "Ventana Hann U = %.6f\n",
-        U);
+    SPECTRUM_PRINTF("\n");
+    SPECTRUM_PRINTF("========= WELCH =========\n");
+    SPECTRUM_PRINTF("Segmentos     : %d\n", segments);
+    SPECTRUM_PRINTF("Tam ventana   : %d\n", segment_length);
+    SPECTRUM_PRINTF("Solape        : %d\n", overlap);
+    SPECTRUM_PRINTF("df            : %.5f Hz\n", df);
+    SPECTRUM_PRINTF("=========================\n");
+
+    SPECTRUM_PRINTF("========= TOP PICOS ESPECTRALES =========\n");
+
+    for(int i=0;i<debug_bins;i++)
+    {
+        SPECTRUM_PRINTF("%.3f Hz  -> %e\n",
+                        debug_freq[i],
+                        debug_peta[i]);
+    }
+
+    SPECTRUM_PRINTF("=========================================\n");
+
+    SPECTRUM_PRINTF("m0    : %.8e\n", *m0);
+    SPECTRUM_PRINTF("m1    : %.8e\n", *m1);
+    SPECTRUM_PRINTF("m2    : %.8e\n", *m2);
+    SPECTRUM_PRINTF("fp    : %.3f Hz\n", *fp);
 
 #endif
 
-}
+}    
 
 /*==============================================================
                 PROCESAMIENTO ESPECTRAL
