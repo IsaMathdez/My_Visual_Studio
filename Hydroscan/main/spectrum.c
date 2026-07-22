@@ -181,7 +181,8 @@ static void compute_wave_moments(
         float *m0,
         float *m1,
         float *m2,
-        float *fp)
+        float *fp,
+        bool *valid)
 {
     /*----------------------------------------------------------
                     PARAMETROS DE WELCH
@@ -208,10 +209,22 @@ static void compute_wave_moments(
     *m1 = 0.0f;
     *m2 = 0.0f;
     *fp = 0.0f;
+    *valid = true;
 
     debug_bins = 0;
 
     float peak_power = -1.0f;
+
+    /*------------------------------------------
+        Variables para detección de rango
+    ------------------------------------------*/
+
+    float total_energy = 0.0f;
+
+    float first_bin_energy = 0.0f;
+    float last_bin_energy  = 0.0f;
+
+    bool first_valid_bin = true;
 
     /*----------------------------------------------------------
                 NUMERO DE SEGMENTOS WELCH
@@ -388,6 +401,28 @@ static void compute_wave_moments(
         }
 
         /*------------------------------------------
+            Energía total del espectro
+        ------------------------------------------*/
+
+        total_energy += Peta;
+
+        /*------------------------------------------
+            Primer bin válido
+        ------------------------------------------*/
+
+        if(first_valid_bin)
+        {
+            first_bin_energy = Peta;
+            first_valid_bin = false;
+        }
+
+        /*------------------------------------------
+            Último bin válido
+        ------------------------------------------*/
+
+        last_bin_energy = Peta;
+
+        /*------------------------------------------
                 MOMENTOS ESPECTRALES
         ------------------------------------------*/
 
@@ -406,7 +441,66 @@ static void compute_wave_moments(
         }
     }
 
+    /*------------------------------------------
+    Detección de oleaje fuera del rango
+    ------------------------------------------*/
+
+    float low_percent = 0.0f;
+    float high_percent = 0.0f;
+
+    if(total_energy > 0.0f)
+    {
+        low_percent =
+            100.0f *
+            first_bin_energy /
+            total_energy;
+
+        high_percent =
+            100.0f *
+            last_bin_energy /
+            total_energy;
+    }
+
+    bool below_range =
+    (low_percent > 45.0f) && (*fp <= (WAVE_MIN_HZ + 0.5f * df));
+    // En 80 no me detecta pasado el limite, en 60 me detecta antes de pasar limite
+    // SE DEBE ACTUALIZAR ESTA PARTE
+
+    bool above_range =
+    (high_percent > 45.0f) && (*fp >= (WAVE_MAX_HZ - 0.5f * df));
+
+    *valid =
+        !(below_range || above_range);
+
+    if(!(*valid))
+    {
+        *fp = 0.0f;
+    }
+
 #if SPECTRUM_DEBUG
+
+    SPECTRUM_PRINTF(
+        "\nEnergia primer bin : %.1f %%\n",
+        low_percent);
+
+    SPECTRUM_PRINTF(
+        "Energia ultimo bin : %.1f %%\n",
+        high_percent);
+
+    if(!(*valid))
+    {
+        if(below_range)
+        {
+            SPECTRUM_PRINTF(
+                "Oleaje por DEBAJO del rango medible.\n");
+        }
+
+        if(above_range)
+        {
+            SPECTRUM_PRINTF(
+                "Oleaje por ENCIMA del rango medible.\n");
+        }
+    }
 
     SPECTRUM_PRINTF("\n");
     SPECTRUM_PRINTF("========= WELCH =========\n");
@@ -416,7 +510,7 @@ static void compute_wave_moments(
     SPECTRUM_PRINTF("df            : %.5f Hz\n", df);
     SPECTRUM_PRINTF("=========================\n");
 
-    SPECTRUM_PRINTF("========= TOP PICOS ESPECTRALES =========\n");
+    /*SPECTRUM_PRINTF("========= TOP PICOS ESPECTRALES =========\n");
 
     for(int i=0;i<debug_bins;i++)
     {
@@ -430,7 +524,7 @@ static void compute_wave_moments(
     SPECTRUM_PRINTF("m0    : %.8e\n", *m0);
     SPECTRUM_PRINTF("m1    : %.8e\n", *m1);
     SPECTRUM_PRINTF("m2    : %.8e\n", *m2);
-    SPECTRUM_PRINTF("fp    : %.3f Hz\n", *fp);
+    SPECTRUM_PRINTF("fp    : %.3f Hz\n", *fp); */
 
 #endif
 
@@ -463,50 +557,64 @@ void spectrum_process(
             &result->m0,
             &result->m1,
             &result->m2,
-            &result->fp);
+            &result->fp,
+            &result->valid);
 
-    result->Hs =
+    if (!result->valid)
+    {
+        result->Hs = 0.0f;
+        result->sigma = 0.0f;
+        result->Tp = 0.0f;
+        result->Tm01 = 0.0f;
+        result->Tm02 = 0.0f;
+        result->direction = 0.0f;
+        result->fp = 0.0f;
+    }
+    else
+    {
+
+        result->Hs =
         4.0f*sqrtf(fmaxf(result->m0,0.0f));
 
-    result->sigma =
-        sqrtf(fmaxf(result->m0,0.0f));
+        result->sigma =
+            sqrtf(fmaxf(result->m0,0.0f));
 
-    result->Tp =
-        (result->fp>0.0f)?
-        1.0f/result->fp:0.0f;
+        result->Tp =
+            (result->fp>0.0f)?
+            1.0f/result->fp:0.0f;
 
-    result->Tm01 =
-        (result->m1>0)?
-        result->m0/result->m1:0.0f;
+        result->Tm01 =
+            (result->m1>0)?
+            result->m0/result->m1:0.0f;
 
-    result->Tm02 =
-        (result->m2>0)?
-        sqrtf(result->m0/result->m2):0.0f;
+        result->Tm02 =
+            (result->m2>0)?
+            sqrtf(result->m0/result->m2):0.0f;
 
-    float var_r =
-        mean_square(roll,samples);
+        float var_r =
+            mean_square(roll,samples);
 
-    float var_p =
-        mean_square(pitch,samples);
+        float var_p =
+            mean_square(pitch,samples);
 
-    float cov = 0.0f;
+        float cov = 0.0f;
 
-    for(int i=0;i<samples;i++)
-        cov += roll[i]*pitch[i];
+        for(int i=0;i<samples;i++)
+            cov += roll[i]*pitch[i];
 
-    cov /= samples;
+        cov /= samples;
 
-    float dir =
-        0.5f*atan2f(
-            2.0f*cov,
-            var_r-var_p);
+        float dir =
+            0.5f*atan2f(
+                2.0f*cov,
+                var_r-var_p);
 
-    result->direction =
-        dir*180.0f/M_PI;
+        result->direction =
+            dir*180.0f/M_PI;
 
-    if(result->direction<0)
-        result->direction+=180.0f;
-
+        if(result->direction<0)
+            result->direction+=180.0f;
+    }
 
 #if SPECTRUM_DEBUG
 

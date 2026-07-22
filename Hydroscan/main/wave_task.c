@@ -171,7 +171,7 @@ void wave_initialize(void)
              WAIT_BETWEEN_BURSTS_SEC);
 
     ESP_LOGI(TAG,
-             "Modulo listo.");
+             "Modulo listo, v4.0.4");
 }
 
 /*=============================================================
@@ -353,14 +353,26 @@ WAVE_PRINTF("====================================================\n");
                 &spectrum_result);
 
             /*------------------------------------------------------
-                        Actualizar buoy_data
+                Actualizar buoy_data
             ------------------------------------------------------*/
 
-            buoy_data.wave_height.value =
-                spectrum_result.Hs;
+            if(spectrum_result.valid)
+            {
+                buoy_data.wave_height.value =
+                    spectrum_result.Hs;
 
-            buoy_data.wave_period.value =
-                spectrum_result.Tp;
+                buoy_data.wave_height.valid = true;
+
+                buoy_data.wave_period.value =
+                    spectrum_result.Tp;
+
+                buoy_data.wave_period.valid = true;
+            }
+            else
+            {
+                buoy_data.wave_height.valid = false;
+                buoy_data.wave_period.valid = false;
+            }
 
             /*------------------------------------------------------
                         Reporte Oceanográfico
@@ -373,13 +385,24 @@ WAVE_PRINTF("====================================================\n");
             WAVE_PRINTF("           REPORTE DE OLEAJE\n");
             WAVE_PRINTF("====================================================\n");
 
-            WAVE_PRINTF(
-                "Altura significativa : %.3f m\n",
-                spectrum_result.Hs);
+            if(spectrum_result.valid)
+            {
+                WAVE_PRINTF(
+                    "Altura significativa : %.3f m\n",
+                    spectrum_result.Hs);
 
-            WAVE_PRINTF(
-                "Periodo pico         : %.3f s\n",
-                spectrum_result.Tp);
+                WAVE_PRINTF(
+                    "Periodo pico         : %.3f s\n",
+                    spectrum_result.Tp);
+            }
+            else
+            {
+                WAVE_PRINTF(
+                    "Altura significativa : Fuera de rango\n");
+
+                WAVE_PRINTF(
+                    "Periodo pico         : Fuera de rango\n");
+            }
 
             WAVE_PRINTF(
                 "Tm01                 : %.3f s\n",

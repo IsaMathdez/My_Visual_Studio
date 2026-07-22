@@ -7,6 +7,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include <stdbool.h>
 
 /*==============================================================
                 RESULTADOS ESPECTRALES
@@ -26,13 +27,15 @@ typedef struct
 
     float sigma;
 
-    float m0;
+    float m0; //
 
-    float m1;
+    float m1; //
 
-    float m2;
+    float m2; //
 
     float direction;
+
+    bool valid; //
 
 } spectrum_result_t;
 

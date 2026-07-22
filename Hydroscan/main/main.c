@@ -1,11 +1,13 @@
-// Hydroscan main application file v4.0.3
+// Hydroscan main application file v4.0.4
 // Made by Isaias Matos
 
-// CAMBIOS v4.0.3
-// Se implementa PSD de Welch real
-// Modificado Spectrum.c, agregado nuevo compute_wave_moments()
+// CAMBIOS v4.0.4
+// OBJETIVO: Reportar cuando el oleaje medido esta fuera del rango de frecuencia de oleaje.
+// Modificado spectrum.c / .h, wave_task.c, telemetry.c
 
-// A MEJORAR EN v4.0.4
+// A MEJORAR EN v4.0.5
+// Ajustar un poco mas el resultado de Hs
+// Ampliar el rango de frecuencia de oleaje 
 // Arreglar Telemetry
 // Reajustar ecuacion del tds sensor
 

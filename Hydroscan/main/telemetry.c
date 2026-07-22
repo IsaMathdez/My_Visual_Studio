@@ -86,11 +86,11 @@ void telemetry_task(void *pvParameters)
         float salinity = buoy_data.salinity.value;
         bool sal_ok = buoy_data.salinity.valid;
 
-        float hs = buoy_data.wave_height.value;
+        /*float hs = buoy_data.wave_height.value;
         bool hs_ok = buoy_data.wave_height.valid;
 
         float tp = buoy_data.wave_period.value;
-        bool tp_ok = buoy_data.wave_period.valid;
+        bool tp_ok = buoy_data.wave_period.valid; */
 
         printf("\n");
         printf("=====================================================\n");
@@ -147,19 +147,25 @@ void telemetry_task(void *pvParameters)
 
         printf("[ OLEAJE ]\n");
 
-        printf("Altura Hs   : ");
-
-        if (hs_ok)
-            printf("%.2f m\n", hs);
+        if(buoy_data.wave_height.valid)
+        {
+            printf("Hs: %.2f m\n",
+                buoy_data.wave_height.value);
+        }
         else
-            printf("---\n");
+        {
+            printf("Hs: N/D\n");
+        }
 
-        printf("Periodo Tp  : ");
-
-        if (tp_ok)
-            printf("%.2f s\n", tp);
+        if(buoy_data.wave_period.valid)
+        {
+            printf("Tp: %.2f s\n",
+                buoy_data.wave_period.value);
+        }
         else
-            printf("---\n");
+        {
+            printf("Tp: N/D\n");
+        }
 
         printf("\n");
 
