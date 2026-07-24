@@ -29,8 +29,9 @@ static const char *TAG = "SPECTRUM";
  * Se pueden modificar posteriormente.
  */
 
-#define WAVE_MIN_HZ      0.12f
-#define WAVE_MAX_HZ      1.00f
+#define WAVE_MIN_HZ      0.05f      // 20.0 s maximo de periodo (Filtro fuera de rango probado con 0.12 Hz)
+#define WAVE_MAX_HZ      1.00f      // 1.0 s minimo de periodo
+#define WINDOW_LENGHT    512        // Tamaño de ventana para DFT
 
 // Debug 
 #define SPECTRUM_DEBUG   1
@@ -46,8 +47,8 @@ static const char *TAG = "SPECTRUM";
                 VARIABLES DE DEBUG
 ==============================================================*/
 
-static float debug_freq[256];
-static float debug_peta[256];
+static float debug_freq[WINDOW_LENGHT];
+static float debug_peta[WINDOW_LENGHT];
 static int debug_bins = 0;
 
 /*==============================================================
@@ -171,6 +172,248 @@ static int welch_segment_count(
 }
 
 /*==============================================================
+        DETECCIÓN DE OLEAJE FUERA DEL RANGO MEDIBLE
+==============================================================*/
+
+static bool spectrum_detect_valid_range(
+        const float *freq,
+        const float *peta,
+        int bins)
+{
+    if(bins < 5)
+        return false;
+
+    /*------------------------------------------
+            Suavizado del espectro
+    ------------------------------------------*/
+
+    float peta_smooth[WINDOW_LENGHT];
+
+    peta_smooth[0] =
+        (peta[0] +
+         peta[1]) * 0.5f;
+
+    for(int i = 1; i < bins - 1; i++)
+    {
+        peta_smooth[i] =
+            (peta[i-1] +
+             peta[i] +
+             peta[i+1]) / 3.0f;
+    }
+
+    peta_smooth[bins-1] =
+        (peta[bins-2] +
+         peta[bins-1]) * 0.5f;
+
+    /*------------------------------------------
+            Buscar el máximo global
+    ------------------------------------------*/
+
+    int peak_bin = 0;
+
+    float peak_power =
+        peta_smooth[0];
+
+    float total_energy = 0.0f;
+
+    float weighted_freq = 0.0f;
+
+    for(int i = 0; i < bins; i++)
+    {
+        total_energy +=
+            peta_smooth[i];
+
+        weighted_freq +=
+            freq[i] *
+            peta_smooth[i];
+
+        if(peta_smooth[i] >
+           peak_power)
+        {
+            peak_power =
+                peta_smooth[i];
+
+            peak_bin = i;
+        }
+    }
+
+    if(total_energy <= 0.0f)
+        return false;
+
+    /*------------------------------------------
+            Centroide espectral
+    ------------------------------------------*/
+
+    float centroid =
+        weighted_freq /
+        total_energy;
+
+#if SPECTRUM_DEBUG
+
+    SPECTRUM_PRINTF("\n========= SPECTRAL SHAPE =========\n");
+
+    SPECTRUM_PRINTF(
+        "Bins utiles        : %d\n",
+        bins);
+
+    SPECTRUM_PRINTF(
+        "Peak bin           : %d\n",
+        peak_bin);
+
+    SPECTRUM_PRINTF(
+        "Peak frequency     : %.3f Hz\n",
+        freq[peak_bin]);
+
+    SPECTRUM_PRINTF(
+        "Peak period        : %.3f s\n",
+        1.0f / freq[peak_bin]);
+
+    SPECTRUM_PRINTF(
+        "Centroide          : %.3f Hz\n",
+        centroid);
+
+#endif   
+        
+    // Parte II
+
+    /*------------------------------------------
+        Analisis de la forma del espectro
+    ------------------------------------------*/
+
+    int local_peaks = 0;
+
+    int slope_changes = 0;
+
+    int previous_sign = 0;
+
+    for(int i = 1; i < bins - 1; i++)
+    {
+        float left =
+            peta_smooth[i] -
+            peta_smooth[i-1];
+
+        float right =
+            peta_smooth[i+1] -
+            peta_smooth[i];
+
+        /*----------------------------------
+            Buscar máximos locales
+        ----------------------------------*/
+
+        float prominence =
+            peta_smooth[i] /
+            (peak_power + 1e-12f);
+
+        if(left > 0.0f &&
+        right < 0.0f &&
+        prominence > 0.10f)
+        {
+            local_peaks++;
+        }
+
+        /*----------------------------------
+            Analizar pendiente global
+        ----------------------------------*/
+
+        int sign = 0;
+
+        if(right > 0.0f)
+            sign = 1;
+        else if(right < 0.0f)
+            sign = -1;
+
+        if(previous_sign != 0 &&
+           sign != 0 &&
+           sign != previous_sign)
+        {
+            slope_changes++;
+        }
+
+        if(sign != 0)
+            previous_sign = sign;
+    }
+
+    /*------------------------------------------
+        Distancia del pico a los extremos
+    ------------------------------------------*/
+
+    int distance_left =
+        peak_bin;
+
+    int distance_right =
+        (bins - 1) - peak_bin;
+
+#if SPECTRUM_DEBUG
+
+    SPECTRUM_PRINTF(
+        "Picos locales      : %d\n",
+        local_peaks);
+
+    SPECTRUM_PRINTF(
+        "Cambios pendiente  : %d\n",
+        slope_changes);
+
+    SPECTRUM_PRINTF(
+        "Distancia izquierda: %d\n",
+        distance_left);
+
+    SPECTRUM_PRINTF(
+        "Distancia derecha  : %d\n",
+        distance_right);
+
+#endif
+
+    // Parte III
+
+    /*----------------------------------------------------------
+        Detección de oleaje fuera del rango medible
+    ----------------------------------------------------------*/
+
+    /*
+    * El pico debe estar prácticamente pegado al borde.
+    */
+
+    bool below_range =
+    (
+        (peak_bin == 0) &&
+        (distance_left == 0) &&
+        (centroid <= (freq[0] + 1.5f * (freq[1] - freq[0]))) &&
+        (local_peaks == 0)
+    );
+
+    /*
+    * Caso equivalente para el extremo superior.
+    */
+
+    bool above_range =
+    (
+        (peak_bin == (bins - 1)) &&
+        (distance_right == 0) &&
+        (centroid >= (freq[bins - 1] - 1.5f * (freq[1] - freq[0]))) &&
+        (local_peaks == 0)
+    );
+
+
+#if SPECTRUM_DEBUG
+
+    SPECTRUM_PRINTF(
+        "Below range      : %s\n",
+        below_range ? "SI" : "NO");
+
+    SPECTRUM_PRINTF(
+        "Above range      : %s\n",
+        above_range ? "SI" : "NO");
+
+    SPECTRUM_PRINTF(
+        "====================================\n\n");
+
+#endif
+
+    return !(below_range || above_range);
+
+}
+
+/*==============================================================
             CÁLCULO DE MOMENTOS ESPECTRALES
 ==============================================================*/
 
@@ -188,7 +431,7 @@ static void compute_wave_moments(
                     PARAMETROS DE WELCH
     ----------------------------------------------------------*/
 
-    const int segment_length = 256;
+    const int segment_length = WINDOW_LENGHT;
 
     const int overlap = segment_length / 2;
 
@@ -215,17 +458,6 @@ static void compute_wave_moments(
 
     float peak_power = -1.0f;
 
-    /*------------------------------------------
-        Variables para detección de rango
-    ------------------------------------------*/
-
-    float total_energy = 0.0f;
-
-    float first_bin_energy = 0.0f;
-    float last_bin_energy  = 0.0f;
-
-    bool first_valid_bin = true;
-
     /*----------------------------------------------------------
                 NUMERO DE SEGMENTOS WELCH
     ----------------------------------------------------------*/
@@ -243,7 +475,7 @@ static void compute_wave_moments(
                 PSD PROMEDIO
     ----------------------------------------------------------*/
 
-    float Paa_average[129];
+    float Paa_average[kmax+1];
 
     memset(
         Paa_average,
@@ -401,28 +633,6 @@ static void compute_wave_moments(
         }
 
         /*------------------------------------------
-            Energía total del espectro
-        ------------------------------------------*/
-
-        total_energy += Peta;
-
-        /*------------------------------------------
-            Primer bin válido
-        ------------------------------------------*/
-
-        if(first_valid_bin)
-        {
-            first_bin_energy = Peta;
-            first_valid_bin = false;
-        }
-
-        /*------------------------------------------
-            Último bin válido
-        ------------------------------------------*/
-
-        last_bin_energy = Peta;
-
-        /*------------------------------------------
                 MOMENTOS ESPECTRALES
         ------------------------------------------*/
 
@@ -442,65 +652,18 @@ static void compute_wave_moments(
     }
 
     /*------------------------------------------
-    Detección de oleaje fuera del rango
+        Verificar si el espectro es válido
     ------------------------------------------*/
-
-    float low_percent = 0.0f;
-    float high_percent = 0.0f;
-
-    if(total_energy > 0.0f)
-    {
-        low_percent =
-            100.0f *
-            first_bin_energy /
-            total_energy;
-
-        high_percent =
-            100.0f *
-            last_bin_energy /
-            total_energy;
-    }
-
-    bool below_range =
-    (low_percent > 45.0f) && (*fp <= (WAVE_MIN_HZ + 0.5f * df));
-    // En 80 no me detecta pasado el limite, en 60 me detecta antes de pasar limite
-    // SE DEBE ACTUALIZAR ESTA PARTE
-
-    bool above_range =
-    (high_percent > 45.0f) && (*fp >= (WAVE_MAX_HZ - 0.5f * df));
-
-    *valid =
-        !(below_range || above_range);
-
-    if(!(*valid))
-    {
-        *fp = 0.0f;
-    }
+    
+    bool validation =
+        spectrum_detect_valid_range(
+            debug_freq,
+            debug_peta,
+            debug_bins); 
+    /*
+    *valid = validation; */
 
 #if SPECTRUM_DEBUG
-
-    SPECTRUM_PRINTF(
-        "\nEnergia primer bin : %.1f %%\n",
-        low_percent);
-
-    SPECTRUM_PRINTF(
-        "Energia ultimo bin : %.1f %%\n",
-        high_percent);
-
-    if(!(*valid))
-    {
-        if(below_range)
-        {
-            SPECTRUM_PRINTF(
-                "Oleaje por DEBAJO del rango medible.\n");
-        }
-
-        if(above_range)
-        {
-            SPECTRUM_PRINTF(
-                "Oleaje por ENCIMA del rango medible.\n");
-        }
-    }
 
     SPECTRUM_PRINTF("\n");
     SPECTRUM_PRINTF("========= WELCH =========\n");
