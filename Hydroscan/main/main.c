@@ -1,15 +1,16 @@
-// Hydroscan main application file v4.0.4.5
+// Hydroscan main application file v4.0.4.6
 // Made by Isaias Matos
 
-// CAMBIOS v4.0.4.5
+// CAMBIOS v4.0.4.6
 // OBJETIVO: Reportar cuando el oleaje medido esta fuera del rango de frecuencia de oleaje.
 // Creado: Nueva funcion spectrum_detect_valid_range()
-// Cambiado: ventana del welch a 512 muestras
+// Cambiado: ventana del welch a 512 muestras, 
+//  frecuencia de muestreo a 5 Hz, tiempo de rafaga a 120 s.
 // Modificado: spectrum.c / .h, wave_task.c, telemetry.c
+// NOTA: Funciona a la primera vez que se carga el codigo, si se reinicia el modulo se arruina
 
 // A MEJORAR EN v4.0.5
 // Ajustar un poco mas el resultado de Hs
-// Ampliar el rango de frecuencia de oleaje 
 // Arreglar Telemetry
 // Reajustar ecuacion del tds sensor
 
@@ -34,7 +35,7 @@ void app_main(void)
     printf("        HYDROSCAN - BOYA OCEANOGRAFICA\n");
     printf("=============================================\n");
 
-    printf("Sistema inicializado. v4.0.4.5\n");
+    printf("Sistema inicializado. v4.0.4.6\n");
 
 
     /*----------------------------------------------------------

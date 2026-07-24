@@ -21,10 +21,10 @@
                         CONFIGURACION
 =============================================================*/
 
-#define SAMPLE_RATE_HZ 10.0f
+#define SAMPLE_RATE_HZ 5.0f
 #define SAMPLE_PERIOD_MS ((int)(1000.0f / SAMPLE_RATE_HZ))
 
-#define BURST_DURATION_SEC 60
+#define BURST_DURATION_SEC 120
 #define WAIT_BETWEEN_BURSTS_SEC 10
 
 #define BURST_SAMPLES ((int)(SAMPLE_RATE_HZ * BURST_DURATION_SEC))
