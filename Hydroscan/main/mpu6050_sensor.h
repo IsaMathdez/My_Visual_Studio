@@ -25,7 +25,7 @@ extern "C" {
 
 /* Frecuencia de muestreo utilizada por Hydroscan */
 
-#define MPU6050_SAMPLE_RATE_HZ     10.0f
+#define MPU6050_SAMPLE_RATE_HZ     5.0f
 #define MPU6050_DT                 (1.0f / MPU6050_SAMPLE_RATE_HZ)
 
 /* Escalas configuradas */
