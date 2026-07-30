@@ -9,5 +9,11 @@
   ],
   "idf.currentSetup": "c:\\ESP32\\v5.5.2\\esp-idf",
   "idf.flashType": "UART",
-  "idf.portWin": "COM7"
+  "idf.portWin": "COM11",
+  "idf.openOcdConfigs": [
+    "board/esp32s3-builtin.cfg"
+  ],
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32s3"
+  }
 }

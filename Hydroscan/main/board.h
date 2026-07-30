@@ -15,23 +15,23 @@
 /**********************
  * GPIO DS18B20
  **********************/
-#define PIN_DS18B20           4
+#define PIN_DS18B20           11
 
 /**********************
  * GPIO Sensor TDS
  **********************/
-#define PIN_TDS_ADC           36
+#define PIN_TDS_ADC           10
 
 /**********************
  * LED de estado
  **********************/
-#define PIN_STATUS_LED        2
+#define PIN_STATUS_LED        48
 
 /**********************
  * MPU6050 (I2C)
  **********************/
-#define PIN_I2C_SDA           21
-#define PIN_I2C_SCL           22
+#define PIN_I2C_SDA           9
+#define PIN_I2C_SCL           8
 #define I2C_PORT             I2C_NUM_0
 #define I2C_FREQ_HZ          400000      // 400 kHz
 
