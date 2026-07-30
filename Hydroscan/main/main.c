@@ -1,16 +1,15 @@
-// Hydroscan main application file v4.0.4.7
+// Hydroscan main application file v4.0.4.8
 // Made by Isaias Matos
 
-// CAMBIOS v4.0.4.7
-// OBJETIVO: Reportar fuera del rango, con nuevo rango 1 s - 20 s.
-// Cambiado: Declarar Hz tanto en mpu6050_sensor.h como en wave_task.c 
-//  frecuencia de muestreo a 5 Hz, tiempo de rafaga a 120 s.
-// Modificado: 
-// NOTA: Aun no funciona
+// CAMBIOS v4.0.4.8
+// OBJETIVO: Reportar fuera del rango, con nuevo rango 1 s - 10 s. YA FUNCIONA
+// Cambiado: Declarar Hz tanto en mpu6050_sensor.h como en wave_task.h
+//  frecuencia de muestreo a 5 Hz, tiempo de rafaga a 120 s. Alta resolucion.
+// Modificado: agregado highpass_filter(), solo por si acaso.
+// NOTA: Resultados muy buenos, no se pudo ampliar rango hasta 20s
 
 // A MEJORAR EN v4.0.5
 // Ajustar un poco mas el resultado de Hs
-// Arreglar Telemetry
 // Reajustar ecuacion del tds sensor
 
 #include <stdio.h>
@@ -34,7 +33,7 @@ void app_main(void)
     printf("        HYDROSCAN - BOYA OCEANOGRAFICA\n");
     printf("=============================================\n");
 
-    printf("Sistema inicializado. v4.0.4.7\n");
+    printf("Sistema inicializado. v4.0.4.8\n");
 
 
     /*----------------------------------------------------------

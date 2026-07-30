@@ -21,14 +21,14 @@ extern "C" {
                     CONFIGURACION GENERAL
 =============================================================*/
 
-#define SAMPLE_RATE_HZ              10.0f
+#define SAMPLE_RATE_HZ              5.0f
 #define SAMPLE_PERIOD_MS            ((uint32_t)(1000.0f / SAMPLE_RATE_HZ))
 
-#define BURST_DURATION_SEC          60
+#define BURST_DURATION_SEC          120
 
 #define BURST_SAMPLES               ((uint32_t)(SAMPLE_RATE_HZ * BURST_DURATION_SEC))
 
-#define WAIT_BETWEEN_BURSTS_SEC     5
+#define WAIT_BETWEEN_BURSTS_SEC     10
 
 /*=============================================================
                         DEBUG

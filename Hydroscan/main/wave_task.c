@@ -20,14 +20,14 @@
 /*=============================================================
                         CONFIGURACION
 =============================================================*/
-
+/*
 #define SAMPLE_RATE_HZ 5.0f
 #define SAMPLE_PERIOD_MS ((int)(1000.0f / SAMPLE_RATE_HZ))
 
 #define BURST_DURATION_SEC 120
 #define WAIT_BETWEEN_BURSTS_SEC 10
 
-#define BURST_SAMPLES ((int)(SAMPLE_RATE_HZ * BURST_DURATION_SEC))
+#define BURST_SAMPLES ((int)(SAMPLE_RATE_HZ * BURST_DURATION_SEC)) */
 
 #define WAVE_TASK_STACK_SIZE 8192
 #define WAVE_TASK_PRIORITY 5
@@ -171,7 +171,7 @@ void wave_initialize(void)
              WAIT_BETWEEN_BURSTS_SEC);
 
     ESP_LOGI(TAG,
-             "Modulo listo, v4.0.4");
+             "Modulo listo, v4.0.4.8");
 }
 
 /*=============================================================

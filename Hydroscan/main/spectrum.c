@@ -29,7 +29,7 @@ static const char *TAG = "SPECTRUM";
  * Se pueden modificar posteriormente.
  */
 
-#define WAVE_MIN_HZ      0.05f      // 20.0 s maximo de periodo (Filtro fuera de rango probado con 0.12 Hz)
+#define WAVE_MIN_HZ      0.1f      // 10.0 s maximo de periodo (Filtro fuera de rango probado)
 #define WAVE_MAX_HZ      1.00f      // 1.0 s minimo de periodo
 #define WINDOW_LENGHT    512        // Tamaño de ventana para DFT
 
@@ -413,6 +413,47 @@ static bool spectrum_detect_valid_range(
 
 }
 
+static void highpass_filter(
+        float *x,
+        int n,
+        float fs,
+        float cutoff_hz)
+{
+    if(n < 2)
+        return;
+
+    const float dt = 1.0f / fs;
+
+    const float RC =
+        1.0f /
+        (2.0f *
+         (float)M_PI *
+         cutoff_hz);
+
+    const float alpha =
+        RC /
+        (RC + dt);
+
+    float y_prev = 0.0f;
+    float x_prev = x[0];
+
+    for(int i=1;i<n;i++)
+    {
+        float y =
+            alpha *
+            ( y_prev +
+              x[i] -
+              x_prev );
+
+        x_prev = x[i];
+        y_prev = y;
+
+        x[i] = y;
+    }
+
+    x[0]=0.0f;
+}
+
 /*==============================================================
             CÁLCULO DE MOMENTOS ESPECTRALES
 ==============================================================*/
@@ -625,7 +666,7 @@ static void compute_wave_moments(
                     DEBUG
         ------------------------------------------*/
 
-        if(debug_bins < 256)
+        if(debug_bins < WINDOW_LENGHT)
         {
             debug_freq[debug_bins] = f;
             debug_peta[debug_bins] = Peta;
@@ -708,6 +749,14 @@ void spectrum_process(
     remove_mean(vertical_acc,samples);
 
     detrend_linear(vertical_acc,samples);
+
+    highpass_filter(
+        vertical_acc,
+        samples,
+        fs,
+        0.1f);
+
+    remove_mean(vertical_acc,samples);
 
     remove_mean(roll,samples);
 
