@@ -9,6 +9,8 @@ idf_component_register(
         "wave_processing.c"
         "spectrum.c"
         "wave_task.c"
+        "modem.c"
+        "gps.c"
 
     INCLUDE_DIRS "."
 )
