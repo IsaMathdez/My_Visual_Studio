@@ -1,16 +1,17 @@
 // Hydroscan main application file v5.0.2
 // Made by Isaias Matos
 
-// CAMBIOS v5.0.2
+// CAMBIOS v5.0.2 Parte II
 // OBJETIVO: Agregar los codigos de LILYGO modulo, probar GPS y LTE
 // Parametros: Sensor de oleaje: frecuencia de muestreo a 5 Hz, tiempo de rafaga a 120 s. Alta resolucion.
-// AGREGADO: Utilities.h, modem.c/.h, gps.c/.h,   
-// Modificado: buoy_data.h, CMakeList.txt
+// AGREGADO: Firebase.c/.h,   
+// Modificado: main.c, gps.c, modem.c/.h, CMakeList.txt
 // RESULTADOS: 
 //      EL modem ya conecta y reconoce la tarjeta SIM.
 //      El GPS ya obtiene la posicion y la guarda en buoy_data.
-//      Falta crear Firebase.c, para subir datos medinate LTE a la base de datos
-//      Actualizar gps_update()
+//      Agregado sistema mutex para evitar conflictos entre tareas de gps y firebase
+//      El modem ya obtienen IP y API
+//      El modem aun no envia datos a Firebase.
 // NOTA: Recomendable hacer mas pruebas del oleaje
 
 // A MEJORAR EN v5.0.3
@@ -31,6 +32,7 @@
 
 #include "modem.h"
 #include "gps.h"
+#include "firebase.h"
 
 // ACTUALIZADO
 
@@ -112,14 +114,21 @@ void app_main(void)
 
     gps_init();
 
-    while (1){
+    firebase_init();
 
+    while (1)
+    {
         gps_update();
 
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        if (gps_has_fix())
+        {
+            firebase_send();
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 
-    printf("Todas las tareas fueron creadas correctamente.\n");
+    printf("\nTodas las tareas fueron creadas correctamente.\n");
 
     while (1)
     {

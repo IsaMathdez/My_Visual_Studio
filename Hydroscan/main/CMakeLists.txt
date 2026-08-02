@@ -11,6 +11,7 @@ idf_component_register(
         "wave_task.c"
         "modem.c"
         "gps.c"
+        "firebase.c"
 
     INCLUDE_DIRS "."
 )

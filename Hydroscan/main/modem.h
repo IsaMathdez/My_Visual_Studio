@@ -15,4 +15,39 @@ int modem_read_response(char *buffer,
 
 esp_err_t modem_send_at(const char *cmd);
 
+/*==============================================================
+                    Utilidades AT
+==============================================================*/
+
+esp_err_t modem_wait_for(
+        const char *expected,
+        uint32_t timeout_ms);
+
+esp_err_t modem_send_wait(
+        const char *cmd,
+        const char *expected,
+        uint32_t timeout_ms);
+
+void modem_flush_uart(void);
+
+bool modem_response_contains(
+        const char *buffer,
+        const char *text);
+
+        
+esp_err_t modem_set_apn(const char *apn);
+
+esp_err_t modem_activate_pdp(void);
+
+esp_err_t modem_get_ip(char *ip, size_t len);
+
+bool modem_has_ip(void);
+
+//==============================================================
+//                  Funciones de bloqueo
+
+bool modem_lock(uint32_t timeout_ms);
+
+void modem_unlock(void);
+
 #endif

@@ -24,9 +24,23 @@
 
 #include <string.h>
 
+#include "freertos/semphr.h"
+
+static SemaphoreHandle_t modem_mutex = NULL;
+
 static const char *TAG = "MODEM";
 
 static bool modem_ready = false;
+
+#define MODEM_RESPONSE_BUFFER_SIZE    1024
+
+static char modem_response[MODEM_RESPONSE_BUFFER_SIZE];
+
+static char modem_ip[32];
+
+#ifndef NETWORK_APN
+#define NETWORK_APN "altice"
+#endif
 
 /*==============================================================
                         Inicializar UART
@@ -67,6 +81,107 @@ static esp_err_t modem_uart_init(void)
             UART_PIN_NO_CHANGE));
 
     return ESP_OK;
+}
+
+/*==============================================================
+                        LIMPIAR UART
+==============================================================*/
+
+void modem_flush_uart(void)
+{
+    uint8_t dummy[64];
+
+    while (uart_read_bytes(
+                MODEM_UART_NUM,
+                dummy,
+                sizeof(dummy),
+                pdMS_TO_TICKS(10)) > 0)
+    {
+        ;
+    }
+}
+
+/*==============================================================
+                ENVIAR COMANDO Y ESPERAR RESPUESTA
+==============================================================*/
+
+bool modem_response_contains(
+        const char *buffer,
+        const char *text)
+{
+    if(buffer == NULL || text == NULL)
+        return false;
+
+    return strstr(buffer, text) != NULL;
+}
+
+/*==============================================================
+                ENVIAR COMANDO Y ESPERAR RESPUESTA
+==============================================================*/
+
+esp_err_t modem_wait_for(
+        const char *expected,
+        uint32_t timeout_ms)
+{
+    int64_t start = esp_timer_get_time() / 1000;
+
+    modem_response[0] = 0;
+
+    while ((esp_timer_get_time()/1000 - start) < timeout_ms)
+    {
+        int len =
+            modem_read_response(
+                modem_response,
+                sizeof(modem_response),
+                500);
+
+        if(len <= 0)
+            continue;
+
+        ESP_LOGI(TAG,"%s",modem_response);
+
+        if(strstr(modem_response, expected))
+            return ESP_OK;
+
+        if(strstr(modem_response,"ERROR"))
+        {
+            ESP_LOGW(TAG,"MODEM ERROR: %s",modem_response);
+
+            return ESP_FAIL;
+        }
+    }
+
+    return ESP_ERR_TIMEOUT;
+}
+
+esp_err_t modem_send_wait(
+        const char *cmd,
+        const char *expected,
+        uint32_t timeout_ms)
+{
+    modem_flush_uart();
+
+    modem_send_at(cmd);
+
+    return modem_wait_for(
+                expected,
+                timeout_ms);
+}
+
+/*==============================================================
+                        APN 
+==============================================================*/
+
+esp_err_t modem_set_apn(const char *apn)
+{
+    char cmd[128];
+
+    snprintf(cmd,
+             sizeof(cmd),
+             "AT+CGDCONT=1,\"IP\",\"%s\"",
+             apn);
+
+    return modem_send_wait(cmd,"OK",5000);
 }
 
 /*==============================================================
@@ -113,6 +228,8 @@ static void modem_power_on(void)
 
  esp_err_t modem_send_at(const char *cmd)
 {
+    modem_flush_uart();
+
     uart_write_bytes(
         MODEM_UART_NUM,
         cmd,
@@ -237,14 +354,80 @@ static bool modem_wait_network(void)
                         ACTIVAR LTE
 ==============================================================*/
 
-static bool modem_activate_network(void)
+esp_err_t modem_activate_pdp(void)
 {
-    modem_send_at("AT+CGATT=1"); // NOs quedamos aqui en bucle, faltaba conectar antena LTE
+    if(modem_send_wait("AT+CGATT=1","OK",10000)!=ESP_OK)
+        return ESP_FAIL;
 
-    if(!modem_wait_response("OK",5000))
+    if(modem_send_wait("AT+CGACT=1,1","OK",10000)!=ESP_OK)
+        return ESP_FAIL;
+
+    return ESP_OK;
+}
+
+/*==============================================================
+                        OBTENER IP
+==============================================================*/
+
+esp_err_t modem_get_ip(char *ip,size_t len)
+{
+    char rx[256];
+
+    modem_send_at("AT+CGPADDR=1");
+
+    if(modem_read_response(rx,sizeof(rx),3000)<=0)
+        return ESP_FAIL;
+
+    ESP_LOGI(TAG,"%s",rx);
+
+    char temp[32];
+
+    if(sscanf(rx,
+              "%*[^:]: 1,%31s",
+              temp)!=1)
+        return ESP_FAIL;
+
+    strncpy(ip,temp,len);
+
+    return ESP_OK;
+}
+
+bool modem_has_ip(void)
+{
+    modem_ip[0]=0;
+
+    if(modem_get_ip(modem_ip,sizeof(modem_ip))!=ESP_OK)
         return false;
 
+    if(strlen(modem_ip)==0)
+        return false;
+
+    if(strcmp(modem_ip,"0.0.0.0")==0)
+        return false;
+
+    ESP_LOGI(TAG,"IP: %s",modem_ip);
+
     return true;
+}
+
+/*==============================================================
+                    BLOQUEO DEL MODEM
+==============================================================*/
+
+bool modem_lock(uint32_t timeout_ms)
+{
+    if(modem_mutex == NULL)
+        return false;
+
+    return xSemaphoreTake(
+            modem_mutex,
+            pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+void modem_unlock(void)
+{
+    if(modem_mutex)
+        xSemaphoreGive(modem_mutex);
 }
 
 /*==============================================================
@@ -297,6 +480,13 @@ esp_err_t modem_init(void)
 {
     modem_ready=false;
 
+    modem_mutex = xSemaphoreCreateMutex();
+
+    if(modem_mutex == NULL)
+    {
+        return ESP_FAIL;
+    }
+
     modem_uart_init();
 
     modem_power_on();
@@ -310,8 +500,40 @@ esp_err_t modem_init(void)
     if(!modem_wait_network())
         return ESP_FAIL;
 
-    if(!modem_activate_network())
+    /* Configurar APN */
+
+    if(modem_set_apn(NETWORK_APN)!=ESP_OK)
         return ESP_FAIL;
+    else
+        ESP_LOGI(TAG,"APN set to: %s",NETWORK_APN);
+
+    /* Activar PDP */
+
+    if(modem_activate_pdp()!=ESP_OK)
+        return ESP_FAIL;
+    else
+        ESP_LOGI(TAG,"PDP activated");
+
+    /* Esperar IP */
+
+    int retry=10;
+
+    while(retry--)
+    {
+        if(modem_has_ip())
+            break;
+
+        ESP_LOGI(TAG,"Waiting IP...");
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+
+    if(!modem_has_ip())
+    {
+        ESP_LOGE(TAG,"No IP assigned");
+
+        return ESP_FAIL;
+    }
 
     modem_ready=true;
 

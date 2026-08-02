@@ -1,4 +1,15 @@
 
+/*
+ * ============================================================
+ *                      HYDROSCAN
+ * ------------------------------------------------------------
+ * Archivo      : gps.c
+ * Descripción  : GPS del modulo LILYGO
+ *
+ * Autor        : Hydroscan Project
+ * ============================================================
+ */
+
 #include "gps.h"
 
 #include "modem.h"
@@ -15,9 +26,15 @@
 #include <stdio.h>
 #include <string.h>
 
+#define GPS_UPDATE_PERIOD_MS (5000)
+
 static const char *TAG = "GPS";
 
 static bool gps_fix = false;
+
+/*==============================================================
+                        Inicializar GPS
+==============================================================*/
 
 esp_err_t gps_init(void)
 {
@@ -49,6 +66,10 @@ esp_err_t gps_init(void)
 
 // Parte II
 
+/*==============================================================
+                        Pedir info GPS
+==============================================================*/
+
 static bool gps_read_info(char *buffer, size_t len)
 {
     modem_send_at("AT+CGNSSINFO");
@@ -66,54 +87,128 @@ static bool gps_read_info(char *buffer, size_t len)
     return true;
 }
 
+/*==============================================================
+                        Convertir coordenadas
+==============================================================*/
+
 static float gps_convert_coordinate(const char *coord, char hemi)
 {
-    if(coord == NULL || strlen(coord) < 4)
+    if (coord == NULL || strlen(coord) == 0)
         return 0.0f;
 
-    float value = atof(coord);
+    float decimal = atof(coord);
 
-    int degrees = (int)(value / 100.0f);
-
-    float minutes = value - degrees * 100.0f;
-
-    float decimal = degrees + minutes / 60.0f;
-
-    if(hemi == 'S' || hemi == 'W')
+    if (hemi == 'S' || hemi == 'W')
         decimal = -decimal;
 
     return decimal;
 }
 
-esp_err_t gps_update(void)
+/*==============================================================
+                        Funcion principal GPS
+==============================================================*/
+
+esp_err_t gps_update(void)      // ACTUALIZADO + mutex
 {
     char rx[256];
 
-    char lat_str[20];
-    char lon_str[20];
+    static uint32_t last_update = 0;
 
-    char lat_hemi;
-    char lon_hemi;
+    uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
-    char date[16];
-    char utc[16];
+    // Bloquear el acceso al modem para evitar conflictos con otras tareas
 
-    float altitude;
-    float speed;
+    if (!modem_lock(10000))
+    {
+        ESP_LOGE(TAG, "Cannot lock modem");
+        modem_unlock();
+        return ESP_FAIL;
+    }
 
-    //gps_init();
+    if ((now - last_update) < GPS_UPDATE_PERIOD_MS)
+    {
+        modem_unlock();
+        return ESP_OK;
+    }
 
-    /* Leer respuesta del módem */
+    last_update = now;
+
     if (!gps_read_info(rx, sizeof(rx)))
     {
         ESP_LOGW(TAG, "No response from GPS");
+        
+        modem_unlock();
         return ESP_FAIL;
     }
 
     ESP_LOGI(TAG, "%s", rx);
 
-    /* ¿Todavía no existe FIX? */
-    if (strstr(rx, "+CGPSINFO: ,"))
+    char *start = strstr(rx, "+CGNSSINFO:");
+
+    if (start == NULL) 
+    {
+        modem_unlock();
+        return ESP_FAIL;
+    }
+
+    start += strlen("+CGNSSINFO:");
+
+    while (*start == ' ')
+        start++;
+
+    char field[20][32] = {0};
+
+    int field_index = 0;
+    int char_index = 0;
+
+    while (*start != '\0' &&
+           *start != '\r' &&
+           *start != '\n' &&
+           field_index < 20)
+    {
+        if (*start == ',')
+        {
+            field[field_index][char_index] = '\0';
+
+            field_index++;
+            char_index = 0;
+        }
+        else
+        {
+            if (char_index < 31)
+            {
+                field[field_index][char_index++] = *start;
+            }
+        }
+
+        start++;
+    }
+
+    field[field_index][char_index] = '\0';
+
+    /*
+        Campos del A7608:
+
+        0  Run Status
+        1  Fix Status
+        2
+        3
+        4
+        5  Latitude
+        6  N/S
+        7  Longitude
+        8  E/W
+        9  Date
+        10 UTC
+        11 Altitude
+        12 Speed
+        13 Course
+        14 HDOP
+        15 PDOP
+        16 Satellites
+    */
+
+    if (strlen(field[5]) == 0 || strlen(field[7]) == 0)
     {
         gps_fix = false;
 
@@ -124,38 +219,21 @@ esp_err_t gps_update(void)
 
         ESP_LOGI(TAG, "Waiting GPS FIX...");
 
+        modem_unlock();
         return ESP_OK;
     }
 
-    int fields =
-    sscanf(
-        rx,
-        "+CGPSINFO: %19[^,],%c,%19[^,],%c,%15[^,],%15[^,],%f,%f",
-        lat_str,
-        &lat_hemi,
-        lon_str,
-        &lon_hemi,
-        date,
-        utc,
-        &altitude,
-        &speed);
+    float latitude =
+        gps_convert_coordinate(field[5], field[6][0]);
 
-    if (fields != 8)
-    {
-        ESP_LOGW(TAG, "Invalid GPS frame");
+    float longitude =
+        gps_convert_coordinate(field[7], field[8][0]);
 
-        gps_fix = false;
+    float altitude = atof(field[11]);
 
-        return ESP_FAIL;
-    }
-
-    float latitude  = gps_convert_coordinate(lat_str, lat_hemi);
-    float longitude = gps_convert_coordinate(lon_str, lon_hemi);
+    float speed = atof(field[12]);
 
     gps_fix = true;
-
-    uint32_t now =
-        xTaskGetTickCount() * portTICK_PERIOD_MS;
 
     buoy_data.latitude.value = latitude;
     buoy_data.latitude.valid = true;
@@ -174,14 +252,19 @@ esp_err_t gps_update(void)
     buoy_data.speed.last_update_ms = now;
 
     ESP_LOGI(TAG,
-             "GPS FIX | Lat: %.6f | Lon: %.6f | Alt: %.2f m | Speed: %.2f km/h",
+             "GPS FIX | Lat: %.7f | Lon: %.7f | Alt: %.2f m | Speed: %.2f km/h",
              latitude,
              longitude,
              altitude,
              speed);
 
+    modem_unlock();
     return ESP_OK;
 }
 
-
+// AGregar bool gps_has_fix(void)
+bool gps_has_fix(void)
+{
+    return gps_fix;
+}
 
