@@ -143,6 +143,13 @@ esp_err_t modem_wait_for(
         if(strstr(modem_response, expected))
             return ESP_OK;
 
+        /* DOWNLOAD es una respuesta parcial válida */
+        if (strstr(modem_response, "DOWNLOAD"))
+        {
+            if (strcmp(expected, "DOWNLOAD") == 0)
+                return ESP_OK;
+        }
+
         if(strstr(modem_response,"ERROR"))
         {
             ESP_LOGW(TAG,"MODEM ERROR: %s",modem_response);
@@ -177,9 +184,19 @@ esp_err_t modem_set_apn(const char *apn)
     char cmd[128];
 
     snprintf(cmd,
-             sizeof(cmd),
-             "AT+CGDCONT=1,\"IP\",\"%s\"",
-             apn);
+            sizeof(cmd),
+            "AT+CGDCONT=1,\"IP\",\"%s\"",
+            apn);
+
+    if(modem_send_wait(cmd,"OK",5000)!=ESP_OK)
+    {
+        ESP_LOGE(TAG,"Cannot configure PDP context");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG,"APN configured");
+
+    return ESP_OK;
 
     return modem_send_wait(cmd,"OK",5000);
 }
@@ -332,19 +349,29 @@ static bool modem_wait_sim(void)
                     REGISTRO EN RED
 ==============================================================*/
 
-static bool modem_wait_network(void)
+static bool modem_wait_network(void)    // Actualizado
 {
     while(true)
     {
-        modem_send_at("AT+CREG?");
+        modem_send_at("AT+CEREG?");
 
-        if(modem_wait_response(",1",1000))
+        if(modem_read_response(modem_response,
+                               sizeof(modem_response),
+                               3000) <= 0)
+        {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        ESP_LOGI(TAG,"%s", modem_response);
+
+        if(strstr(modem_response,",1"))
             return true;
 
-        if(modem_wait_response(",5",1000))
+        if(strstr(modem_response,",5"))
             return true;
 
-        ESP_LOGI(TAG,"Registering network...");
+        ESP_LOGI(TAG,"Waiting LTE registration...");
 
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -411,6 +438,66 @@ bool modem_has_ip(void)
 }
 
 /*==============================================================
+                    CALIDAD SEÑAL LTE
+==============================================================*/
+
+static esp_err_t modem_check_signal(void)
+{
+    modem_send_at("AT+CSQ");
+
+    if(modem_read_response(modem_response,
+                           sizeof(modem_response),
+                           3000) <= 0)
+        return ESP_FAIL;
+
+    ESP_LOGI(TAG,"%s", modem_response);
+
+    return ESP_OK;
+}
+
+/*==============================================================
+                    VERIFICAR LTE
+==============================================================*/
+
+static esp_err_t modem_check_radio(void)
+{
+    modem_send_at("AT+CPSI?");
+
+    if(modem_read_response(modem_response,
+                           sizeof(modem_response),
+                           5000) <= 0)
+        return ESP_FAIL;
+
+    ESP_LOGI(TAG,"%s", modem_response);
+
+    return ESP_OK;
+}
+
+static esp_err_t modem_ipaddr(void)
+{
+    modem_send_at("AT+IPADDR");
+
+    if(modem_read_response(modem_response,
+                           sizeof(modem_response),
+                           5000) <= 0)
+        return ESP_FAIL;
+
+    ESP_LOGI(TAG,"%s", modem_response);
+
+    return ESP_OK;
+}
+
+static esp_err_t modem_ping(void)   // No usada por ahora
+{
+    modem_send_at("AT+CPING=\"8.8.8.8\"");
+
+    if(modem_wait_for("OK",15000)!=ESP_OK)
+        return ESP_FAIL;
+
+    return ESP_OK;
+}
+
+/*==============================================================
                     BLOQUEO DEL MODEM
 ==============================================================*/
 
@@ -473,6 +560,95 @@ int modem_read_response(char *buffer,
 }
 
 /*==============================================================
+                    FUNCION NETOPEN
+==============================================================*/
+
+static esp_err_t modem_netopen(void) // version 2.1
+{
+    modem_flush_uart();
+
+    modem_send_at("AT+NETOPEN");
+
+    // esperar únicamente OK     
+        
+    if(modem_wait_for("OK",5000)!=ESP_OK)         
+        return ESP_FAIL; 
+
+    vTaskDelay(pdMS_TO_TICKS(5000));
+
+    // ahora esperar el URC 
+
+    //if(modem_wait_for("+NETOPEN:0",30000)!=ESP_OK)
+      //  return ESP_FAIL;
+
+    return ESP_OK;
+} 
+/*
+static esp_err_t modem_netopen(void)    // Version 3
+{
+    char rx[1024];
+
+    modem_flush_uart();
+
+    modem_send_at("AT+NETOPEN");
+
+    // Esperar OK del comando 
+    
+    if(modem_read_response(rx, sizeof(rx), 5000) <= 0)
+    {
+        ESP_LOGE(TAG,"NETOPEN no respondió");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG,"%s", rx);
+
+    if(strstr(rx,"OK") == NULL)
+        return ESP_FAIL;
+
+    ESP_LOGI(TAG,"Esperando URC NETOPEN...");
+
+    int64_t start = esp_timer_get_time()/1000;
+
+    while((esp_timer_get_time()/1000 - start) < 30000)
+    {
+        int len = modem_read_response(rx,sizeof(rx),1000);
+
+        if(len <= 0)
+            continue;
+
+        ESP_LOGI(TAG,"%s",rx);
+
+        if(strstr(rx,"+NETOPEN: 0"))
+        {
+            ESP_LOGI(TAG,"NETOPEN SUCCESS");
+            return ESP_OK;
+        }
+
+        if(strstr(rx,"+NETOPEN:0"))
+        {
+            ESP_LOGI(TAG,"NETOPEN SUCCESS");
+            return ESP_OK;
+        }
+
+        if(strstr(rx,"+NETOPEN: 1"))
+        {
+            ESP_LOGI(TAG,"NETOPEN ALREADY OPEN");
+            return ESP_OK;
+        }
+
+        if(strstr(rx,"+NETOPEN:1"))
+        {
+            ESP_LOGI(TAG,"NETOPEN ALREADY OPEN");
+            return ESP_OK;
+        }
+    }
+
+    ESP_LOGE(TAG,"NETOPEN timeout");
+
+    return ESP_FAIL;
+} */
+
+/*==============================================================
                     FUNCION PRINCIPAL MODEM
 ==============================================================*/
 
@@ -497,45 +673,34 @@ esp_err_t modem_init(void)
     if(!modem_wait_sim())
         return ESP_FAIL;
 
+    if(modem_check_signal()!=ESP_OK)
+        return ESP_FAIL;
+
+    if(modem_check_radio()!=ESP_OK)
+        return ESP_FAIL;
+
     if(!modem_wait_network())
         return ESP_FAIL;
 
-    /* Configurar APN */
-
     if(modem_set_apn(NETWORK_APN)!=ESP_OK)
         return ESP_FAIL;
-    else
-        ESP_LOGI(TAG,"APN set to: %s",NETWORK_APN);
-
-    /* Activar PDP */
 
     if(modem_activate_pdp()!=ESP_OK)
         return ESP_FAIL;
-    else
-        ESP_LOGI(TAG,"PDP activated");
-
-    /* Esperar IP */
-
-    int retry=10;
-
-    while(retry--)
-    {
-        if(modem_has_ip())
-            break;
-
-        ESP_LOGI(TAG,"Waiting IP...");
-
-        vTaskDelay(pdMS_TO_TICKS(2000));
-    }
 
     if(!modem_has_ip())
-    {
-        ESP_LOGE(TAG,"No IP assigned");
-
         return ESP_FAIL;
-    }
+    
+    if(modem_netopen()!=ESP_OK)     // El modem nunca devuelve +NETOPEN:0
+        return ESP_FAIL; 
 
-    modem_ready=true;
+    if(modem_ipaddr()!=ESP_OK)
+        return ESP_FAIL;  
+
+    //if(modem_ping()!=ESP_OK)
+      //  return ESP_FAIL; 
+
+    modem_ready = true;
 
     ESP_LOGI(TAG,"MODEM READY");
 

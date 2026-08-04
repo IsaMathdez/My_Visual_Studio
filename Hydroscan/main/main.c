@@ -1,28 +1,31 @@
 // Hydroscan main application file v5.0.2
 // Made by Isaias Matos
 
-// CAMBIOS v5.0.2 Parte II
+// CAMBIOS v5.0.2 Parte III
 // OBJETIVO: Agregar los codigos de LILYGO modulo, probar GPS y LTE
 // Parametros: Sensor de oleaje: frecuencia de muestreo a 5 Hz, tiempo de rafaga a 120 s. Alta resolucion.
-// AGREGADO: Firebase.c/.h,   
-// Modificado: main.c, gps.c, modem.c/.h, CMakeList.txt
+// AGREGADO: 
+//      Actualizacion de los comandos AT del modem.  
+// Modificado: main.c, firebase.c, modem.c
 // RESULTADOS: 
 //      EL modem ya conecta y reconoce la tarjeta SIM.
 //      El GPS ya obtiene la posicion y la guarda en buoy_data.
 //      Agregado sistema mutex para evitar conflictos entre tareas de gps y firebase
 //      El modem ya obtienen IP y API
+// PROBLEMAS:
 //      El modem aun no envia datos a Firebase.
+//      El comando netopen no responde
+//      El comando httpdata aun no responde
 // NOTA: Recomendable hacer mas pruebas del oleaje
 
 // A MEJORAR EN v5.0.3
 // Reajustar ecuacion del tds sensor
-// Integrar codigo de GPS
-// Integrar codigo de comunicacion LTE
 
 #include <stdio.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_log.h"
 
 #include "buoy_data.h"
 #include "tds_sensor.h"
@@ -33,6 +36,8 @@
 #include "modem.h"
 #include "gps.h"
 #include "firebase.h"
+
+static const char *TAG = "MAIN";
 
 // ACTUALIZADO
 
@@ -112,20 +117,25 @@ void app_main(void)
 
     modem_init();
 
-    gps_init();
-
-    firebase_init();
-
-    while (1)
+    if(modem_is_ready())
     {
-        gps_update();
+        gps_init();
 
-        if (gps_has_fix())
+        firebase_init();
+
+        while (1)
         {
-            firebase_send();
-        }
+            gps_update();
 
-        vTaskDelay(pdMS_TO_TICKS(5000));
+            if (gps_has_fix())
+            {
+                firebase_send();
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(5000));
+        }
+    } else {
+        ESP_LOGI(TAG, "Modem not ready");
     }
 
     printf("\nTodas las tareas fueron creadas correctamente.\n");

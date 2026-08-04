@@ -220,7 +220,7 @@ esp_err_t firebase_send(void)  // ACTUALIZADO + mutex
 
     sprintf(
         firebase_cmd,
-        "AT+HTTPDATA=%d,10000",
+        "AT+HTTPDATA=%d,10000",     // Error aqui
         (int)strlen(json_buffer));
 
     ESP_LOGI(TAG,"%s",firebase_cmd);
@@ -249,10 +249,9 @@ esp_err_t firebase_send(void)  // ACTUALIZADO + mutex
         json_buffer,
         strlen(json_buffer));
 
-    uart_write_bytes(
-            MODEM_UART_NUM,
-            "\r\n",
-            2);
+    uart_wait_tx_done(
+        MODEM_UART_NUM,
+        pdMS_TO_TICKS(3000));
 
     if(modem_wait_for(
         "OK",
@@ -266,6 +265,8 @@ esp_err_t firebase_send(void)  // ACTUALIZADO + mutex
 
         modem_unlock();
         return ESP_FAIL;
+    } else {
+        ESP_LOGI(TAG,"Payload accepted");
     }
 
     /*
