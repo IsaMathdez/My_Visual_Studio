@@ -563,90 +563,20 @@ int modem_read_response(char *buffer,
                     FUNCION NETOPEN
 ==============================================================*/
 
-static esp_err_t modem_netopen(void) // version 2.1
+static esp_err_t modem_netopen(void) // version 4
 {
     modem_flush_uart();
 
-    modem_send_at("AT+NETOPEN");
+    modem_send_raw(
+        "AT+NETOPEN",
+        modem_response,
+        sizeof(modem_response),
+        15000);
 
-    // esperar únicamente OK     
-        
-    if(modem_wait_for("OK",5000)!=ESP_OK)         
-        return ESP_FAIL; 
-
-    vTaskDelay(pdMS_TO_TICKS(5000));
-
-    // ahora esperar el URC 
-
-    //if(modem_wait_for("+NETOPEN:0",30000)!=ESP_OK)
-      //  return ESP_FAIL;
+    ESP_LOGI(TAG,"%s",modem_response);
 
     return ESP_OK;
 } 
-/*
-static esp_err_t modem_netopen(void)    // Version 3
-{
-    char rx[1024];
-
-    modem_flush_uart();
-
-    modem_send_at("AT+NETOPEN");
-
-    // Esperar OK del comando 
-    
-    if(modem_read_response(rx, sizeof(rx), 5000) <= 0)
-    {
-        ESP_LOGE(TAG,"NETOPEN no respondió");
-        return ESP_FAIL;
-    }
-
-    ESP_LOGI(TAG,"%s", rx);
-
-    if(strstr(rx,"OK") == NULL)
-        return ESP_FAIL;
-
-    ESP_LOGI(TAG,"Esperando URC NETOPEN...");
-
-    int64_t start = esp_timer_get_time()/1000;
-
-    while((esp_timer_get_time()/1000 - start) < 30000)
-    {
-        int len = modem_read_response(rx,sizeof(rx),1000);
-
-        if(len <= 0)
-            continue;
-
-        ESP_LOGI(TAG,"%s",rx);
-
-        if(strstr(rx,"+NETOPEN: 0"))
-        {
-            ESP_LOGI(TAG,"NETOPEN SUCCESS");
-            return ESP_OK;
-        }
-
-        if(strstr(rx,"+NETOPEN:0"))
-        {
-            ESP_LOGI(TAG,"NETOPEN SUCCESS");
-            return ESP_OK;
-        }
-
-        if(strstr(rx,"+NETOPEN: 1"))
-        {
-            ESP_LOGI(TAG,"NETOPEN ALREADY OPEN");
-            return ESP_OK;
-        }
-
-        if(strstr(rx,"+NETOPEN:1"))
-        {
-            ESP_LOGI(TAG,"NETOPEN ALREADY OPEN");
-            return ESP_OK;
-        }
-    }
-
-    ESP_LOGE(TAG,"NETOPEN timeout");
-
-    return ESP_FAIL;
-} */
 
 /*==============================================================
                     FUNCION PRINCIPAL MODEM
@@ -714,4 +644,66 @@ esp_err_t modem_init(void)
 bool modem_is_ready(void)
 {
     return modem_ready;
+}
+
+/*==============================================================
+            ENVIAR COMANDO RAW (DEPURACION)
+==============================================================*/
+
+int modem_read_all(
+        char *buffer,
+        size_t max_len,
+        uint32_t timeout_ms)
+{
+    size_t index = 0;
+    uint8_t c;
+
+    int64_t start = esp_timer_get_time()/1000;
+
+    while((esp_timer_get_time()/1000-start) < timeout_ms)
+    {
+        int len = uart_read_bytes(
+                    MODEM_UART_NUM,
+                    &c,
+                    1,
+                    pdMS_TO_TICKS(20));
+
+        if(len>0)
+        {
+            if(index < max_len-1)
+                buffer[index++] = c;
+
+            buffer[index]=0;
+        }
+    }
+
+    return index;
+}
+
+esp_err_t modem_send_raw(
+        const char *cmd,
+        char *response,
+        size_t response_size,
+        uint32_t timeout_ms)
+{
+    if(response == NULL || response_size == 0)
+        return ESP_ERR_INVALID_ARG;
+
+    modem_send_at(cmd);
+
+    int len = modem_read_all(
+                    response,
+                    response_size,
+                    timeout_ms);
+
+    modem_unlock();
+
+    if(len <= 0)
+        return ESP_ERR_TIMEOUT;
+
+    ESP_LOGI(TAG,
+             "RAW RESPONSE:\n%s",
+             response);
+
+    return ESP_OK;
 }

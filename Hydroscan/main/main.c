@@ -1,25 +1,26 @@
 // Hydroscan main application file v5.0.2
 // Made by Isaias Matos
 
-// CAMBIOS v5.0.2 Parte III
+// CAMBIOS v5.0.2 Parte IV Definitiva
 // OBJETIVO: Agregar los codigos de LILYGO modulo, probar GPS y LTE
-// Parametros: Sensor de oleaje: frecuencia de muestreo a 5 Hz, tiempo de rafaga a 120 s. Alta resolucion.
+// Parametros: 
+//      Sensor de oleaje: frecuencia de muestreo a 5 Hz, tiempo de rafaga a 120 s. Alta resolucion.
 // AGREGADO: 
-//      Actualizacion de los comandos AT del modem.  
-// Modificado: main.c, firebase.c, modem.c
+//      Nuevas funciones para enviar y recibir todos los datos de un comando AT  
+// ARCHIVOS MODIFICADOS: main.c, firebase.c, modem.c/.h
 // RESULTADOS: 
 //      EL modem ya conecta y reconoce la tarjeta SIM.
 //      El GPS ya obtiene la posicion y la guarda en buoy_data.
-//      Agregado sistema mutex para evitar conflictos entre tareas de gps y firebase
+//      Agregado sistema mutex para evitar conflictos entre tareas de gps y firebase.
 //      El modem ya obtienen IP y API
-// PROBLEMAS:
-//      El modem aun no envia datos a Firebase.
-//      El comando netopen no responde
-//      El comando httpdata aun no responde
+//      El modem ya envia datos a Firebase.
 // NOTA: Recomendable hacer mas pruebas del oleaje
 
-// A MEJORAR EN v5.0.3
-// Reajustar ecuacion del tds sensor
+// A MEJORAR EN v5.0.3 y versiones futuras
+//      Reajustar ecuacion del tds sensor
+//      Recibir datos de firebase
+//      Definir sistema de tareas final en appmain() 
+//      Probar sistema final con todos los sensores y el modem
 
 #include <stdio.h>
 

@@ -23,6 +23,8 @@
 #include <stdio.h>
 #include <string.h>
 
+static const char BOYA_ID[24] = "Sigan viendo";
+
 static const char *TAG = "FIREBASE";
 
 static const char FIREBASE_URL[] =
@@ -34,7 +36,7 @@ static char json_buffer[512];
 
 static char firebase_cmd[256];
 
-static char firebase_rx[1024];
+static char firebase_rx[2048];
 
 /*==============================================================
                         Inicializar Firebase
@@ -154,6 +156,11 @@ esp_err_t firebase_send(void)  // ACTUALIZADO + mutex
         return ESP_FAIL;
     }
 
+    sprintf(
+         buoy_data.buoy_id,
+         "%s",
+         BOYA_ID);
+
     firebase_build_json();
 
     /*
@@ -175,6 +182,46 @@ esp_err_t firebase_send(void)  // ACTUALIZADO + mutex
         modem_unlock();    
         return ESP_FAIL;
     }
+
+    if(firebase_http_command(
+            "AT+HTTPPARA=\"SSLCFG\",0",
+            3000)!=ESP_OK)
+    {
+        ESP_LOGE(TAG,"Cannot set SSL config");
+
+        modem_unlock();
+        return ESP_FAIL;
+    } 
+
+    // Mandar comandos para depuracion:
+
+/*    sprintf(
+        firebase_cmd,
+        "AT+HTTPINIT");
+
+    ESP_LOGI(TAG,"%s",firebase_cmd);
+   
+    if(modem_send_raw(
+            firebase_cmd,
+            firebase_rx,
+            sizeof(firebase_rx),
+            10000)!=ESP_OK)
+    {
+        ESP_LOGE(TAG,"%s command made no response", firebase_cmd);
+
+        firebase_http_command(
+                "AT+HTTPTERM",
+                3000);
+
+        modem_unlock();
+        return ESP_FAIL;
+    }
+    
+    // Mostrar exactamente todo lo que respondió el módem
+
+    ESP_LOGI(TAG,
+            "RAW RESPONSE:\n%s",
+            firebase_rx); */
 
     /*
      * URL
@@ -215,22 +262,27 @@ esp_err_t firebase_send(void)  // ACTUALIZADO + mutex
     }
 
     /*
-     * Tamaño del JSON
+     * Tamaño del JSON: Sustuido por modem_send_raw()
      */
+
+    /*
+    * Solicitar modo HTTPDATA
+    */
 
     sprintf(
         firebase_cmd,
-        "AT+HTTPDATA=%d,10000",     // Error aqui
+        "AT+HTTPDATA=%d,10000",
         (int)strlen(json_buffer));
 
     ESP_LOGI(TAG,"%s",firebase_cmd);
 
-    if(modem_send_wait(
+    if(modem_send_raw(
             firebase_cmd,
-            "DOWNLOAD",
-            10000)!=ESP_OK)
+            firebase_rx,
+            sizeof(firebase_rx),
+            15000)!=ESP_OK)
     {
-        ESP_LOGE(TAG,"DOWNLOAD timeout");
+        ESP_LOGE(TAG,"HTTPDATA command failed");
 
         firebase_http_command(
                 "AT+HTTPTERM",
@@ -239,6 +291,28 @@ esp_err_t firebase_send(void)  // ACTUALIZADO + mutex
         modem_unlock();
         return ESP_FAIL;
     }
+
+    // Mostrar exactamente todo lo que respondió el módem
+
+    ESP_LOGI(TAG,
+            "HTTPDATA RAW RESPONSE:\n%s",
+            firebase_rx);
+
+    // Verificar manualmente si apareció DOWNLOAD
+
+    if(strstr(firebase_rx,"DOWNLOAD")==NULL)
+    {
+        ESP_LOGE(TAG,"DOWNLOAD not found");
+
+        firebase_http_command(
+                "AT+HTTPTERM",
+                3000);
+
+        modem_unlock();
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG,"DOWNLOAD detected");
 
     /*
      * Enviar JSON
@@ -273,13 +347,19 @@ esp_err_t firebase_send(void)  // ACTUALIZADO + mutex
      * Ejecutar HTTP PUT
      */
 
-    modem_send_at("AT+HTTPACTION=4");
+    sprintf(
+        firebase_cmd,
+        "AT+HTTPACTION=4");
 
-    if(modem_wait_for(
-            "+HTTPACTION:",
-            30000)!=ESP_OK)
+    ESP_LOGI(TAG,"%s",firebase_cmd);
+   
+    if(modem_send_raw(
+            firebase_cmd,
+            firebase_rx,
+            sizeof(firebase_rx),
+            10000)!=ESP_OK)
     {
-        ESP_LOGE(TAG,"HTTPACTION timeout");
+        ESP_LOGE(TAG,"%s command made no response", firebase_cmd);
 
         firebase_http_command(
                 "AT+HTTPTERM",
@@ -288,6 +368,12 @@ esp_err_t firebase_send(void)  // ACTUALIZADO + mutex
         modem_unlock();
         return ESP_FAIL;
     }
+    
+    // Mostrar exactamente todo lo que respondió el módem
+
+    ESP_LOGI(TAG,
+            "RAW RESPONSE:\n%s",
+            firebase_rx);
 
     /*
      * Finalizar sesión

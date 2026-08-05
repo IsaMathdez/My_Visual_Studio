@@ -43,6 +43,12 @@ esp_err_t modem_get_ip(char *ip, size_t len);
 
 bool modem_has_ip(void);
 
+esp_err_t modem_send_raw(
+        const char *cmd,
+        char *response,
+        size_t response_size,
+        uint32_t timeout_ms);
+
 //==============================================================
 //                  Funciones de bloqueo
 
