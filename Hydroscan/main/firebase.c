@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static const char BOYA_ID[24] = "Sigan viendo";
+static const char BOYA_ID[24] = "HYDROSCAN-001";
 
 static const char *TAG = "FIREBASE";
 
@@ -94,8 +94,6 @@ static void firebase_build_json(void)
 
         "\"tds\":%.2f,"
 
-        "\"salinity\":%.2f,"
-
         "\"wave_height\":%.3f,"
 
         "\"wave_period\":%.3f,"
@@ -117,8 +115,6 @@ static void firebase_build_json(void)
         buoy_data.temperature.value,
 
         buoy_data.tds.value,
-
-        buoy_data.salinity.value,
 
         buoy_data.wave_height.value,
 

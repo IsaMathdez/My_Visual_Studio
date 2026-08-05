@@ -448,6 +448,13 @@ WAVE_PRINTF("====================================================\n");
 
             lastWakeTime =
                 xTaskGetTickCount();
+
+#if WAVE_TASK_DEBUG
+
+            WAVE_PRINTF(
+                "Iniciando nueva ráfaga de oleaje...\n");
+
+#endif
         }
     }
 }

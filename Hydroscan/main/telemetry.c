@@ -83,9 +83,6 @@ void telemetry_task(void *pvParameters)
             xTaskGetTickCount() -
             buoy_data.tds.last_update_ms;
 
-        float salinity = buoy_data.salinity.value;
-        bool sal_ok = buoy_data.salinity.valid;
-
         /*float hs = buoy_data.wave_height.value;
         bool hs_ok = buoy_data.wave_height.valid;
 
@@ -126,20 +123,6 @@ void telemetry_task(void *pvParameters)
 
         printf("Edad dato   : %lu ms\n",
                (unsigned long)pdTICKS_TO_MS(tds_age));
-
-        printf("\n");
-
-        /*---------------- SALINIDAD ------------------*/
-
-        printf("[ SALINIDAD ]\n");
-
-        printf("Estado      : %s\n",
-               status_string(sal_ok));
-
-        if (sal_ok)
-            printf("Valor       : %.0f ppm\n", salinity);
-        else
-            printf("Valor       : ---\n");
 
         printf("\n");
 

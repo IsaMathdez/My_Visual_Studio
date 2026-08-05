@@ -1,25 +1,33 @@
-// Hydroscan main application file v5.0.2
+// Hydroscan main application file v5.0.3
 // Made by Isaias Matos
 
-// CAMBIOS v5.0.2 Parte IV Definitiva
-// OBJETIVO: Agregar los codigos de LILYGO modulo, probar GPS y LTE
+// CAMBIOS v5.0.3
+// OBJETIVO: Integrar todas las tareas de los sensores y hacer un envio a Firebase de todos los datos de la boya.
 // Parametros: 
 //      Sensor de oleaje: frecuencia de muestreo a 5 Hz, tiempo de rafaga a 120 s. Alta resolucion.
+//      Duracion de rafaga de oleaje: 120 s
+//      Duracion de espera entre rafagas de oleaje: 120s
+//      Periodo de actualizacion de datos de oleaje: 60 s
+//      Periodo de actualizacion de GPS: 90 s
+//      Periodo de actualizacion para envios a Firebase: 180 s
 // AGREGADO: 
-//      Nuevas funciones para enviar y recibir todos los datos de un comando AT  
-// ARCHIVOS MODIFICADOS: main.c, firebase.c, modem.c/.h
+//      Nuevas funciones para enviar y recibir todos los datos de un comando AT 
+//      ID de la boya y timestamp dado por el gps 
+// ARCHIVOS MODIFICADOS: main.c,  firebase.c, gps.c, telemetry.c, wave_task.c/.h
+//      Eliminado salinidad del sistema, solo TDS.
 // RESULTADOS: 
 //      EL modem ya conecta y reconoce la tarjeta SIM.
 //      El GPS ya obtiene la posicion y la guarda en buoy_data.
 //      Agregado sistema mutex para evitar conflictos entre tareas de gps y firebase.
 //      El modem ya obtienen IP y API
-//      El modem ya envia datos a Firebase.
+//      El modem ya envia DATOS COMPLETOS a Firebase.
 // NOTA: Recomendable hacer mas pruebas del oleaje
+// NOTA: Sistema actual requiere tener gps antes de enviar datos a firebase.
 
-// A MEJORAR EN v5.0.3 y versiones futuras
+// A MEJORAR EN v5.0.4 y versiones futuras
+//      ALTA PRIORIDAD -->    Programa para que el modulo LILYGO funcione con las baterias
 //      Reajustar ecuacion del tds sensor
 //      Recibir datos de firebase
-//      Definir sistema de tareas final en appmain() 
 //      Probar sistema final con todos los sensores y el modem
 
 #include <stdio.h>
@@ -42,7 +50,86 @@ static const char *TAG = "MAIN";
 
 // ACTUALIZADO
 
+#define GPS_UPDATE_PERIOD_MS          90000      // 90 s
+#define FIREBASE_UPDATE_PERIOD_MS     180000     // 120 s de wave_burst_duration + 60 s de wave_last_update
+#define TIME_SINCE_LAST_WAVE_UPDATE   60000      // 60 s la mitad de wave_burst_duration
+
+static void modem_task(void *pvParameters);
+
 buoy_data_t buoy_data;
+
+/*==============================================================
+                    MODULO DE COMUNICACION
+==============================================================*/
+
+static void modem_task(void *pvParameters)
+{
+    TickType_t lastGps = xTaskGetTickCount();
+    TickType_t lastFirebase = xTaskGetTickCount();
+
+    bool gps_ok = false;
+
+    bool recent_wave_data = false;
+
+    while (1)
+    {
+        TickType_t now = xTaskGetTickCount();
+
+        /*------------------------------------------
+                ACTUALIZAR GPS
+        ------------------------------------------*/
+
+        if ((now - lastGps) >= pdMS_TO_TICKS(GPS_UPDATE_PERIOD_MS))
+        {
+            lastGps = now;
+
+            ESP_LOGI("MODEM_TASK", "Updating GPS...");
+
+            gps_update();   
+
+            gps_ok = gps_has_fix();
+
+            if(gps_ok)
+            {
+                ESP_LOGI("MODEM_TASK", "GPS FIX OK");
+            }
+            else
+            {
+                ESP_LOGW("MODEM_TASK", "GPS without FIX");
+            }
+        }
+
+        /*------------------------------------------
+                SUBiR DATOS A FIREBASE
+        ------------------------------------------*/
+
+        if ((now - lastFirebase) >= pdMS_TO_TICKS(FIREBASE_UPDATE_PERIOD_MS))
+        {
+            lastFirebase = now;
+
+            recent_wave_data = (buoy_data.wave_height.last_update_ms <= TIME_SINCE_LAST_WAVE_UPDATE 
+                && buoy_data.wave_period.last_update_ms <= TIME_SINCE_LAST_WAVE_UPDATE);    // FUNCIONA!!!!!!
+
+            if(gps_ok && recent_wave_data)
+            {
+                ESP_LOGI("MODEM_TASK", "Uploading Firebase...");
+
+                firebase_send();
+            }
+            else
+            {
+                ESP_LOGW("MODEM_TASK",
+                         "Firebase skipped (No GPS FIX)");
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+}
+
+/*==============================================================
+                        PRINCIPAL
+==============================================================*/
 
 void app_main(void)
 {
@@ -51,13 +138,13 @@ void app_main(void)
     printf("        HYDROSCAN - BOYA OCEANOGRAFICA\n");
     printf("=============================================\n");
 
-    printf("Sistema inicializado. v5.0.2\n");
+    printf("Sistema inicializado. v5.0.3\n");
 
 
     /*----------------------------------------------------------
                     Sensor DS18B20
     ----------------------------------------------------------*/
-    /*
+    
     ds18b20_init();
 
     xTaskCreate(
@@ -66,7 +153,7 @@ void app_main(void)
         4096,
         NULL,
         4,
-        NULL); */
+        NULL); 
 
 
     /*----------------------------------------------------------
@@ -82,21 +169,6 @@ void app_main(void)
         NULL,
         4,
         NULL);
-
-
-    /*----------------------------------------------------------
-                    Sensor de Oleaje
-    ----------------------------------------------------------*/
-
-    /*
-    xTaskCreate(
-        wave_task,
-        "Wave",
-        8192,
-        NULL,
-        5,
-        NULL); */
-
 
     /*----------------------------------------------------------
                     Telemetría
@@ -115,34 +187,40 @@ void app_main(void)
     /*----------------------------------------------------------
                     MODULO LILYGO en proceso
     ----------------------------------------------------------*/
-
-    modem_init();
-
-    if(modem_is_ready())
+ 
+    if(modem_init() == ESP_OK)
     {
         gps_init();
 
         firebase_init();
 
-        while (1)
-        {
-            gps_update();
+        xTaskCreate(
+            modem_task,
+            "MODEM_TASK",
+            8192,
+            NULL,
+            5,
+            NULL);
 
-            if (gps_has_fix())
-            {
-                firebase_send();
-            }
+        ESP_LOGI(TAG,
+                "MODEM TASK CREATED");
 
-            vTaskDelay(pdMS_TO_TICKS(5000));
-        }
-    } else {
-        ESP_LOGI(TAG, "Modem not ready");
+        xTaskCreate(
+            wave_task,
+            "Wave",
+            8192,
+            NULL,
+            5,
+            NULL);
+            
+        ESP_LOGI(TAG,
+                "WAVE TASK CREATED");
+    }
+    else
+    {
+        ESP_LOGE(TAG,
+                "Modem task not ready");
     }
 
     printf("\nTodas las tareas fueron creadas correctamente.\n");
-
-    while (1)
-    {
-        vTaskDelay(portMAX_DELAY);
-    }
 }

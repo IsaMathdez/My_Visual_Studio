@@ -26,7 +26,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define GPS_UPDATE_PERIOD_MS (5000)
+#define GPS_UPDATE_PERIOD_MS (90000)
 
 static const char *TAG = "GPS";
 
@@ -251,12 +251,15 @@ esp_err_t gps_update(void)      // ACTUALIZADO + mutex
     buoy_data.speed.valid = true;
     buoy_data.speed.last_update_ms = now;
 
+    buoy_data.timestamp = atof(field[10]);
+
     ESP_LOGI(TAG,
-             "GPS FIX | Lat: %.7f | Lon: %.7f | Alt: %.2f m | Speed: %.2f km/h",
+             "GPS FIX | Lat: %.7f | Lon: %.7f | Alt: %.2f m | Speed: %.2f km/h | Timestamp: %lu",
              latitude,
              longitude,
              altitude,
-             speed);
+             speed,
+             (unsigned long)buoy_data.timestamp);
 
     modem_unlock();
     return ESP_OK;

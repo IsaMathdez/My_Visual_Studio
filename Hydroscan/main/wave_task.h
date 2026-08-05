@@ -28,7 +28,7 @@ extern "C" {
 
 #define BURST_SAMPLES               ((uint32_t)(SAMPLE_RATE_HZ * BURST_DURATION_SEC))
 
-#define WAIT_BETWEEN_BURSTS_SEC     10
+#define WAIT_BETWEEN_BURSTS_SEC     120
 
 /*=============================================================
                         DEBUG
