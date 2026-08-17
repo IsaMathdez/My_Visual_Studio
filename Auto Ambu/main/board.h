@@ -9,13 +9,13 @@
 
 #define PIN_MODO_ADULTO       13
 #define PIN_MODO_NINO         23
-#define PIN_MODO_AJUSTABLE    18
+#define PIN_MODO_AJUSTABLE    22
 
 // ============================================================
 // POTENCIOMETRO
 // ============================================================
 
-#define PIN_POTENCIOMETRO     32 // Probar tambien pin VP 36
+#define PIN_POTENCIOMETRO     36 // Probar tambien pin VP 36
 
 // ============================================================
 // PUENTE H

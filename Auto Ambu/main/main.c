@@ -1,8 +1,7 @@
 
 // --------------------- AUTO AMBU ------------------------
-//      Codigo v1.0
-//      A probar en v2.0:
-//           Modo ajustable con potenciometro
+//      Codigo v2.0
+//      Comprobado
 
 #include <stdio.h>
 #include <stdbool.h>
@@ -87,8 +86,8 @@ static void configurar_gpio(void)
 
         .mode = GPIO_MODE_INPUT,
 
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
 
         .intr_type = GPIO_INTR_DISABLE
     };
@@ -180,16 +179,16 @@ static void configurar_pwm(void)
 
 static void configurar_adc(void)
 {
-    // GPIO32 = ADC1_CHANNEL_4
+    // GPIO36 VP = ADC1_CHANNEL_0
     adc1_config_width(ADC_WIDTH_BIT_12);
 
     adc1_config_channel_atten(
-        ADC1_CHANNEL_4,
+        ADC1_CHANNEL_0,
         ADC_ATTEN_DB_11
     );
 
 
-    // GPIO39 = ADC1_CHANNEL_3
+    // GPIO39 VN = ADC1_CHANNEL_3
     adc1_config_channel_atten(
         ADC1_CHANNEL_3,
         ADC_ATTEN_DB_11
@@ -293,13 +292,13 @@ static modo_t leer_modo(void)
         gpio_get_level(PIN_MODO_AJUSTABLE);
 
 
-    if (adulto)
+    if (!adulto)
         return MODO_ADULTO;
 
-    if (nino)
+    if (!nino)
         return MODO_NINO;
 
-    if (ajustable)
+    if (!ajustable)
         return MODO_AJUSTABLE;
 
 
@@ -313,7 +312,7 @@ static modo_t leer_modo(void)
 
 static float leer_frecuencia_ajustable(void)
 {
-    int raw = adc1_get_raw(ADC1_CHANNEL_4);
+    int raw = adc1_get_raw(ADC1_CHANNEL_0);
 
 
     float porcentaje =
