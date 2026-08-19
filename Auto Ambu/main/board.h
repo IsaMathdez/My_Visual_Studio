@@ -31,6 +31,8 @@
 
 #define PIN_BATERIA           39
 
+#define PIN_SENSOR_LASER      33
+
 // ============================================================
 // LED
 // Activo en LOW
