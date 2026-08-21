@@ -32,7 +32,7 @@
 /* ADC */
 
 #define TDS_ADC_UNIT ADC_UNIT_1
-#define TDS_ADC_CHANNEL ADC_CHANNEL_0 // GPIO36 (ESP32 clásico)
+#define TDS_ADC_CHANNEL ADC_CHANNEL_9 // GPIO10 (ESP32-S3)
 #define TDS_ADC_ATTEN ADC_ATTEN_DB_12
 #define TDS_ADC_BITWIDTH ADC_BITWIDTH_12
 
@@ -287,7 +287,7 @@ void tds_task(void *pvParameters)
 
         printf("Voltaje           : %.3f V\n", voltage);
 
-        printf("Salinidad         : %.0f ppm\n", salinity);
+        printf("Salinidad         : %.0f ppm\n", tds);
 
         printf("Estado            : ");
 

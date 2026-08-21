@@ -1,8 +1,8 @@
-// Hydroscan main application file v5.0.3
+// Hydroscan main application file v5.0.4
 // Made by Isaias Matos
 
-// CAMBIOS v5.0.3
-// OBJETIVO: Integrar todas las tareas de los sensores y hacer un envio a Firebase de todos los datos de la boya.
+// CAMBIOS v5.0.4 Parte I
+// OBJETIVO: Probar todo nuevamente con el modulo ya acoplado a la placa PCB.
 // Parametros: 
 //      Sensor de oleaje: frecuencia de muestreo a 5 Hz, tiempo de rafaga a 120 s. Alta resolucion.
 //      Duracion de rafaga de oleaje: 120 s
@@ -10,23 +10,19 @@
 //      Periodo de actualizacion de datos de oleaje: 60 s
 //      Periodo de actualizacion de GPS: 90 s
 //      Periodo de actualizacion para envios a Firebase: 180 s
-// AGREGADO: 
-//      Nuevas funciones para enviar y recibir todos los datos de un comando AT 
-//      ID de la boya y timestamp dado por el gps 
-// ARCHIVOS MODIFICADOS: main.c,  firebase.c, gps.c, telemetry.c, wave_task.c/.h
-//      Eliminado salinidad del sistema, solo TDS.
+// ARCHIVOS MODIFICADOS: main.c, tds.c, board.h
+//      Actualizado pines de la board.
 // RESULTADOS: 
 //      EL modem ya conecta y reconoce la tarjeta SIM.
 //      El GPS ya obtiene la posicion y la guarda en buoy_data.
 //      Agregado sistema mutex para evitar conflictos entre tareas de gps y firebase.
 //      El modem ya obtienen IP y API
 //      El modem ya envia DATOS COMPLETOS a Firebase.
+//          Probado en la placa PCB: Sensores TDS y Temp, correcto envio a firebase, bateria funcional.
 // NOTA: Recomendable hacer mas pruebas del oleaje
 // NOTA: Sistema actual requiere tener gps antes de enviar datos a firebase.
 
-// A MEJORAR EN v5.0.4 y versiones futuras
-//      ALTA PRIORIDAD -->    Programa para que el modulo LILYGO funcione con las baterias
-//      Reajustar ecuacion del tds sensor
+// A MEJORAR EN v5.1 y versiones futuras
 //      Recibir datos de firebase
 //      Probar sistema final con todos los sensores y el modem
 
@@ -46,12 +42,13 @@
 #include "gps.h"
 #include "firebase.h"
 
+#include "utilities.h"
+
 static const char *TAG = "MAIN";
 
-// ACTUALIZADO
-
-#define GPS_UPDATE_PERIOD_MS          90000      // 90 s
-#define FIREBASE_UPDATE_PERIOD_MS     180000     // 120 s de wave_burst_duration + 60 s de wave_last_update
+// PARAMETROS GPS - FIREBASE - WAVE
+#define GPS_UPDATE_PERIOD_MS          20000      // 90 s
+#define FIREBASE_UPDATE_PERIOD_MS     30000     // 120 s de wave_burst_duration + 60 s de wave_last_update
 #define TIME_SINCE_LAST_WAVE_UPDATE   60000      // 60 s la mitad de wave_burst_duration
 
 static void modem_task(void *pvParameters);
@@ -137,6 +134,11 @@ void app_main(void)
     printf("=============================================\n");
     printf("        HYDROSCAN - BOYA OCEANOGRAFICA\n");
     printf("=============================================\n");
+
+    // Habilitar el switch del modulo para usar bateria
+    gpio_reset_pin(BOARD_PWRKEY_PIN);
+    gpio_set_direction(BOARD_PWRKEY_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(BOARD_PWRKEY_PIN, 1);
 
     printf("Sistema inicializado. v5.0.3\n");
 

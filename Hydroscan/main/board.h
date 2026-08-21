@@ -15,7 +15,7 @@
 /**********************
  * GPIO DS18B20
  **********************/
-#define PIN_DS18B20           11
+#define PIN_DS18B20           2
 
 /**********************
  * GPIO Sensor TDS
@@ -25,7 +25,7 @@
 /**********************
  * LED de estado
  **********************/
-#define PIN_STATUS_LED        48
+#define PIN_STATUS_LED        
 
 /**********************
  * MPU6050 (I2C)
