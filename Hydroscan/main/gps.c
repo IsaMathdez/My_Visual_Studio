@@ -112,6 +112,8 @@ esp_err_t gps_update(void)      // ACTUALIZADO + mutex
 {
     char rx[256];
 
+    uint32_t real_time;
+
     static uint32_t last_update = 0;
 
     uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
@@ -251,7 +253,33 @@ esp_err_t gps_update(void)      // ACTUALIZADO + mutex
     buoy_data.speed.valid = true;
     buoy_data.speed.last_update_ms = now;
 
-    buoy_data.timestamp = atof(field[10]);
+    /*==============================================================
+        Convertir hora UTC del GPS a UTC-4
+        field[10] viene como HHMMSS.ss
+    ==============================================================*/
+
+    float utc_raw = atof(field[10]);
+
+    int utc_hour = (int)(utc_raw / 10000);
+    int utc_min  = ((int)utc_raw / 100) % 100;
+    int utc_sec  = (int)utc_raw % 100;
+
+    /* Restar 4 horas */
+    int local_hour = utc_hour - 4;
+
+    /* Si cruza medianoche */
+    if (local_hour < 0)
+    {
+        local_hour += 24;
+    }
+
+    /* Guardar como HHMMSS */
+    real_time =
+        (local_hour * 10000) +
+        (utc_min * 100) +
+        utc_sec;
+
+    buoy_data.timestamp = real_time;
 
     ESP_LOGI(TAG,
              "GPS FIX | Lat: %.7f | Lon: %.7f | Alt: %.2f m | Speed: %.2f km/h | Timestamp: %lu",

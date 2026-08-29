@@ -211,6 +211,7 @@ void tds_task(void *pvParameters)
     float adc_average;
     float voltage;
     float tds;
+    float salinity;
 
 #if TDS_USE_TEMP_COMPENSATION
 
@@ -261,6 +262,8 @@ void tds_task(void *pvParameters)
         if (tds < 0.0f)
             tds = 0.0f;
 
+        salinity = tds / 1000;
+
         /*----------------------------------------------
             Actualizar estructura global
         ----------------------------------------------*/
@@ -271,7 +274,7 @@ void tds_task(void *pvParameters)
 
         /* TDS estimada mediante la calibración */
 
-        buoy_data.tds.value = tds;
+        buoy_data.tds.value = salinity;
         buoy_data.tds.valid = true;
         buoy_data.tds.last_update_ms =
             xTaskGetTickCount();

@@ -10,14 +10,6 @@ extern "C" {
 #include "esp_err.h"
 #include "driver/i2c.h"
 
-/*==============================================================
-                        CONFIGURACIÓN I2C
-==============================================================*/
-
-#define MPU6050_I2C_PORT      I2C_NUM_0
-#define MPU6050_SDA_PIN       21
-#define MPU6050_SCL_PIN       22
-#define MPU6050_I2C_FREQ_HZ   400000
 
 /*==============================================================
                     CONFIGURACIÓN DEL SENSOR

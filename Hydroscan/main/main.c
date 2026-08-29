@@ -1,7 +1,7 @@
 // Hydroscan main application file v5.0.4
 // Made by Isaias Matos
 
-// CAMBIOS v5.0.4 Parte I
+// CAMBIOS v5.0.4 Parte II
 // OBJETIVO: Probar todo nuevamente con el modulo ya acoplado a la placa PCB.
 // Parametros: 
 //      Sensor de oleaje: frecuencia de muestreo a 5 Hz, tiempo de rafaga a 120 s. Alta resolucion.
@@ -10,7 +10,7 @@
 //      Periodo de actualizacion de datos de oleaje: 60 s
 //      Periodo de actualizacion de GPS: 90 s
 //      Periodo de actualizacion para envios a Firebase: 180 s
-// ARCHIVOS MODIFICADOS: main.c, tds.c, board.h
+// ARCHIVOS MODIFICADOS: 
 //      Actualizado pines de la board.
 // RESULTADOS: 
 //      EL modem ya conecta y reconoce la tarjeta SIM.
@@ -43,17 +43,48 @@
 #include "firebase.h"
 
 #include "utilities.h"
+#include <time.h>
 
 static const char *TAG = "MAIN";
 
 // PARAMETROS GPS - FIREBASE - WAVE
-#define GPS_UPDATE_PERIOD_MS          20000      // 90 s
-#define FIREBASE_UPDATE_PERIOD_MS     30000     // 120 s de wave_burst_duration + 60 s de wave_last_update
+#define GPS_UPDATE_PERIOD_MS          90000      // 90 s
+#define FIREBASE_UPDATE_PERIOD_MS     180000     // 120 s de wave_burst_duration + 60 s de wave_last_update
 #define TIME_SINCE_LAST_WAVE_UPDATE   60000      // 60 s la mitad de wave_burst_duration
+
+#define LAMP_PIN                      11
 
 static void modem_task(void *pvParameters);
 
+static void update_lamp(void);
+
+
 buoy_data_t buoy_data;
+
+
+/*==============================================================
+                    LAMPARA
+==============================================================*/
+
+static void update_lamp(void)
+{
+    gpio_set_direction(LAMP_PIN, GPIO_MODE_OUTPUT);
+
+    uint32_t local_timestamp = (uint32_t)buoy_data.timestamp;
+
+    int hour = local_timestamp / 10000;
+    int min  = (local_timestamp / 100) % 100;
+
+    bool night = ((((hour >= 17) & (min >= 10)) || hour < 6));
+
+    gpio_set_level(LAMP_PIN, night ? 1 : 0);
+
+    ESP_LOGI(TAG,
+             "Hora local: %02d:%02d | Lampara: %s",
+             hour,
+             min,
+             night ? "ON" : "OFF");
+}
 
 /*==============================================================
                     MODULO DE COMUNICACION
@@ -89,6 +120,8 @@ static void modem_task(void *pvParameters)
             if(gps_ok)
             {
                 ESP_LOGI("MODEM_TASK", "GPS FIX OK");
+
+                update_lamp();
             }
             else
             {
@@ -140,7 +173,7 @@ void app_main(void)
     gpio_set_direction(BOARD_PWRKEY_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(BOARD_PWRKEY_PIN, 1);
 
-    printf("Sistema inicializado. v5.0.3\n");
+    printf("Sistema inicializado. v5.0.4\n");
 
 
     /*----------------------------------------------------------

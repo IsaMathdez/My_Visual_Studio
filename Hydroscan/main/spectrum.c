@@ -701,8 +701,8 @@ static void compute_wave_moments(
             debug_freq,
             debug_peta,
             debug_bins); 
-    /*
-    *valid = validation; */
+    
+    *valid = validation;
 
 #if SPECTRUM_DEBUG
 
